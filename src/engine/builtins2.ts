@@ -304,136 +304,233 @@ function splineEval(t: number[], c: number[], k: number, x: number, q = 0): numb
   return B.reduce((s2, b2, j) => s2 + b2 * cc[j], 0);
 }
 
-/** Linear least squares by Householder QR. */
-function lsq(A: number[][], b: number[]): number[] {
-  const m = A.length, n = A[0].length;
-  const R = A.map(r => r.slice()), y = b.slice();
-  for (let j = 0; j < n; j++) {
-    let norm = 0;
-    for (let i = j; i < m; i++) norm += R[i][j] * R[i][j];
-    norm = Math.sqrt(norm);
-    if (norm === 0) continue;
-    const alpha = R[j][j] > 0 ? -norm : norm;
-    const v = new Array(m).fill(0);
-    v[j] = R[j][j] - alpha;
-    for (let i = j + 1; i < m; i++) v[i] = R[i][j];
-    const vv = v.reduce((s2, x, i) => (i >= j ? s2 + x * x : s2), 0);
-    if (vv === 0) continue;
-    for (let c = j; c < n; c++) {
-      let d = 0;
-      for (let i = j; i < m; i++) d += v[i] * R[i][c];
-      d = 2 * d / vv;
-      for (let i = j; i < m; i++) R[i][c] -= d * v[i];
+/** lt / ut: percentage points of the lower / upper Durbin–Watson bound distributions. */
+interface SplineFit { br: number[]; k: number; c: number[]; s: number; dw: number; lt: number; ut: number; singular: boolean; D: number[] }
+
+/**
+ * Weighted least-squares B-spline fit for the break points br (normal equations, banded Cholesky; a pivot
+ * that vanishes against the original diagonal marks the fit as singular, as in de Boor's L2APPR).
+ * Statistics: rms = √(Σd²/(N − deg − l)) with d = (y − S)·√weight, Durbin–Watson statistic of d and the
+ * percentage points of its lower and upper bound distributions (beta approximations).
+ */
+function splineFit(x: number[], y: number[], br: number[], k: number, w: number[]): SplineFit {
+  const t = clamped(br, k), n = x.length, p = t.length - k - 1;
+  const bw = k + 1;
+  // banded normal equations: A[i][j] for j = i..i+k
+  const A = Array.from({ length: p }, () => new Array(bw).fill(0)), rhs = new Array(p).fill(0);
+  const rows: { first: number; vals: number[] }[] = [];
+  for (let i = 0; i < n; i++) {
+    const B = bsplineBasis(t, k, x[i]);
+    let first = B.findIndex(v => v !== 0);
+    if (first < 0) first = 0;
+    first = Math.min(first, p - bw < 0 ? 0 : p - bw);
+    const vals = B.slice(first, first + bw);
+    rows.push({ first, vals });
+    for (let a = 0; a < vals.length; a++) {
+      rhs[first + a] += vals[a] * w[i] * y[i];
+      for (let b = a; b < vals.length; b++) A[first + a][b - a] += vals[a] * vals[b] * w[i];
     }
-    let d = 0;
-    for (let i = j; i < m; i++) d += v[i] * y[i];
-    d = 2 * d / vv;
-    for (let i = j; i < m; i++) y[i] -= d * v[i];
   }
-  const xs = new Array(n).fill(0);
-  for (let j = n - 1; j >= 0; j--) {
-    let s2 = y[j];
-    for (let c = j + 1; c < n; c++) s2 -= R[j][c] * xs[c];
-    if (Math.abs(R[j][j]) < 1e-300) throw new CalcError('Spline2: zu wenige Datenpunkte zwischen den Knoten');
-    xs[j] = s2 / R[j][j];
+  // Cholesky (LDLᵀ) in band form with singularity test
+  const diag0 = A.map(r => r[0]);
+  let singular = false;
+  for (let i = 0; i < p; i++) {
+    if (!(A[i][0] + diag0[i] > diag0[i])) { singular = true; for (let j = 0; j < bw; j++) A[i][j] = 0; continue; }
+    const inv = 1 / A[i][0];
+    for (let a = 1; a < bw && i + a < p; a++) {
+      const ratio = A[i][a] * inv;
+      for (let b = a; b < bw && i + b < p; b++) A[i + a][b - a] -= A[i][b] * ratio;
+      A[i][a] = ratio;
+    }
+    A[i][0] = inv;
   }
-  return xs;
-}
-
-interface SplineFit { br: number[]; k: number; c: number[]; s: number; dw: number; hi: number; lo: number }
-
-/**
- * Least-squares B-spline fit with the break points br. Statistics as Mathcad: standard error
- * √(SSE/(n−p)), Durbin–Watson statistic of the residuals and the probabilities P(d_U ≥ 4 − DW) and
- * P(d_U ≤ DW) of the upper Durbin–Watson bound d_U (beta approximation with its exact mean and variance).
- */
-function splineFit(x: number[], y: number[], br: number[], k: number, w?: number[]): SplineFit {
-  const t = clamped(br, k), n = x.length;
-  const X = x.map(v => bsplineBasis(t, k, v));
-  const p = X[0].length;
-  if (n <= p) throw new CalcError('Spline2: zu wenige Datenpunkte für die Anzahl der Knoten');
-  const sw = w ? w.map(v => Math.sqrt(v)) : null;
-  const c = lsq(sw ? X.map((r, i) => r.map(v => v * sw[i])) : X, sw ? y.map((v, i) => v * sw[i]) : y);
-  const e = y.map((v, i) => (v - X[i].reduce((s2, b, j) => s2 + b * c[j], 0)) * (sw ? sw[i] : 1));
-  const sse = e.reduce((s2, v) => s2 + v * v, 0);
-  let num = 0;
-  for (let i = 1; i < n; i++) num += (e[i] - e[i - 1]) ** 2;
-  const dw = num / sse;
-  // eigenvalues of the Durbin–Watson matrix: 2(1 − cos(πj/n)); d_U uses the n − p largest
-  const U: number[] = [];
-  for (let j = p; j < n; j++) U.push(2 * (1 - Math.cos(Math.PI * j / n)));
-  const m = U.length, E = U.reduce((a2, b2) => a2 + b2, 0) / m;
-  const V = 2 * U.reduce((a2, b2) => a2 + (b2 - E) ** 2, 0) / (m * (m + 2));
-  const mu = E / 4, va = V / 16, cc = mu * (1 - mu) / va - 1, al = mu * cc, be = (1 - mu) * cc;
-  const lo = betaI(dw / 4, al, be), hi = 1 - betaI((4 - dw) / 4, al, be);
-  return { br, k, c, s: Math.sqrt(sse / (n - p)), dw, hi, lo };
-}
-
-/**
- * New break points for m intervals that equidistribute |s⁽ᵏ⁾|^(1/(k+1)) of the current fit (de Boor's
- * NEWNOT). Approximation of Mathcad's (undocumented) adaptive knot placement.
- */
-function newKnots(f: SplineFit, m: number): number[] {
-  const t = clamped(f.br, f.k);
-  const g = f.br.slice(0, -1).map((a2, i) => {
-    const mid = (a2 + f.br[i + 1]) / 2;
-    const d = splineEval(t, f.c, f.k, mid, f.k);
-    return Math.abs(d) ** (1 / (f.k + 1)) * (f.br[i + 1] - a2);
+  // forward and back substitution
+  const c = rhs.slice();
+  for (let i = 0; i < p; i++) for (let a = 1; a < bw && i + a < p; a++) c[i + a] -= A[i][a] * c[i];
+  for (let i = p - 1; i >= 0; i--) {
+    c[i] *= A[i][0];
+    for (let a = 1; a < bw && i + a < p; a++) c[i] -= A[i][a] * c[i + a];
+  }
+  const d = x.map((_, i) => {
+    const r = rows[i];
+    let v = 0;
+    for (let a = 0; a < r.vals.length; a++) v += r.vals[a] * c[r.first + a];
+    return (v - y[i]) * Math.sqrt(w[i]);
   });
-  const cum = [0];
-  for (const v of g) cum.push(cum[cum.length - 1] + v);
-  const total = cum[cum.length - 1];
-  const a0 = f.br[0], a1 = f.br[f.br.length - 1];
-  if (!(total > 0)) return Array.from({ length: m + 1 }, (_, i) => a0 + (a1 - a0) * i / m);
-  const out = [a0];
-  for (let q = 1; q < m; q++) {
-    const target = total * q / m;
-    let i = 0;
-    while (i < g.length - 1 && cum[i + 1] < target) i++;
-    const frac = g[i] > 0 ? (target - cum[i]) / g[i] : 0;
-    out.push(f.br[i] + frac * (f.br[i + 1] - f.br[i]));
+  const sse = d.reduce((s2, v) => s2 + v * v, 0);
+  let num = 0;
+  for (let i = 1; i < n; i++) num += (d[i] - d[i - 1]) ** 2;
+  const dw = num / sse;
+  const l = br.length - 1, freed = n - k - l;
+  // percentage points of the lower and upper Durbin–Watson bound distributions (beta approximations)
+  let sc = 0, scc = 0;
+  for (let i = 1; i < n - freed; i++) { const ci = Math.cos(Math.PI * i / n); sc += ci; scc += ci * ci; }
+  sc /= freed;
+  const aa = freed * (freed + 2) * (1 - sc * sc) / (n - 2 - 2 * scc - 2 * freed * sc * sc) - 1;
+  const pl = aa * (1 - sc) / 2, pu = aa * (1 + sc) / 2;
+  const lt = betaI(dw / 4, pl, pu), ut = betaI(dw / 4, pu, pl);
+  // (k)th derivative on each interval, for the knot redistribution
+  const D = br.slice(0, -1).map((a2, i) => splineEval(t, c, k, (a2 + br[i + 1]) / 2, k));
+  return { br, k, c, s: Math.sqrt(sse / freed), dw, lt, ut, singular, D };
+}
+
+/** Break points that put the same number of data points into each of the m intervals. */
+function equalInfo(x: number[], m: number): number[] {
+  const n = x.length, out = [x[0]];
+  for (let i = 2; i <= m; i++) {
+    const a = (i - 1) * (n - 1) / m + 1, ii = Math.floor(a);
+    out.push(x[ii - 1] + (a - ii) * (x[ii] - x[ii - 1]));
   }
-  out.push(a1);
+  out.push(x[n - 1]);
   return out;
+}
+
+/** Index of the last data point ≤ v (0-based, clamped). */
+const dataIndex = (x: number[], v: number) => {
+  if (v >= x[x.length - 1]) return x.length - 1;
+  let lo = 0, hi = x.length - 1;
+  while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (x[mid] <= v) lo = mid; else hi = mid; }
+  return lo;
+};
+
+/**
+ * New break points for m intervals (de Boor's NEWNOT as used by Thijsse et al.): the density on interval j is
+ * (|jump of S^(k) at its left end| + |jump at its right end|)^(1/order), each jump divided by the width of the
+ * two adjacent intervals; afterwards every interval is made to contain data points.
+ */
+function newKnots(x: number[], f: SplineFit, m: number): number[] {
+  const a = f.br, ip = a.length - 1, D = f.D, order = f.k + 1, n = x.length;
+  const arb = new Array(m + 1).fill(0);
+  arb[0] = x[0]; arb[m] = x[n - 1];
+  const cum = new Array(ip + 1).fill(0), dens = new Array(ip + 1).fill(0);   // 1-based like the description
+  let difprv = ip >= 2 ? Math.abs((D[1] - D[0]) / (a[2] - a[0])) : 0;
+  for (let i = 2; i <= ip; i++) {
+    const dif = Math.abs((D[i - 1] - D[i - 2]) / (a[i] - a[i - 2]));
+    dens[i - 1] = (dif + difprv) ** (1 / order);
+    cum[i] = cum[i - 1] + dens[i - 1] * (a[i - 1] - a[i - 2]);
+    difprv = dif;
+  }
+  dens[ip] = (2 * difprv) ** (1 / order);
+  const step = (cum[ip] + dens[ip] * (a[ip] - a[ip - 1])) / m;
+  if (step > 0) {
+    let j = 1;
+    for (let i = 2; i <= m; i++) {
+      const si = (i - 1) * step;
+      while (j !== ip && si > cum[j + 1]) j++;
+      arb[i - 1] = dens[j] !== 0 ? a[j - 1] + (si - cum[j]) / dens[j] : (a[j - 1] + a[j]) / 2;
+    }
+  } else {
+    const st = (x[n - 1] - x[0]) / m;
+    for (let i = 2; i <= m; i++) arb[i - 1] = x[i - 1] + (i - 1) * st;
+  }
+  // every interval must contain data points
+  let lleft = 0, iend = 0;
+  for (let i = 1; i <= m; i++) {
+    const left = dataIndex(x, arb[i]);
+    if (left - lleft > 0) lleft = left;
+    else {
+      lleft++;
+      if (lleft < n - 1) arb[i] = (x[lleft] + x[lleft + 1]) / 2;
+      else { iend++; arb[i] = x[n - 1]; }
+    }
+  }
+  if (iend) {
+    let i = 1, ll = n - 2, idif = 0;
+    while (idif < 1 && m - i > 0) {
+      const left = dataIndex(x, arb[m - i]);
+      idif = ll - left;
+      if (idif < 1) { ll--; arb[m - i] = (x[ll] + x[ll + 1]) / 2; i++; }
+    }
+  }
+  return arb;
+}
+
+/** Truncation of a factor-scaled number of intervals (values just below an integer are rounded up). */
+const truncSpec = (v: number) => { const i = Math.floor(v); return i + 1 - v < 1e-7 ? i + 1 : i; };
+
+/**
+ * Automatic search for the spline with the fewest intervals whose residuals pass the Durbin–Watson test
+ * (B. J. Thijsse, M. A. Hollanders, J. Hendrikse, "A practical algorithm for least-squares spline
+ * approximation of data containing noise", Computers in Physics 12 (1998); the algorithm behind Mathcad's
+ * Spline2). Own implementation from the published description:
+ *  1. equal-information break points, l = 1, 2, … (×1.1) until the lower-bound test accepts;
+ *  2. from there downwards (×0.95) with break points redistributed by NEWNOT;
+ *  3. suggest the spline with the fewest intervals that is accepted while the next one is not (upper-bound
+ *     test, otherwise lower-bound test → indecisive); if indecisive, the reversal point is raised (×1.1)
+ *     and the search repeated; without any accepted spline the one with the smallest rms is taken.
+ */
+function spline2Search(x: number[], y: number[], k: number, w: number[], rejlev: number): SplineFit {
+  const n = x.length;
+  const lmax = n - k - 1;
+  let lopt = Math.min(Math.floor(0.8 * n - 1), lmax);
+  const limit = Math.min(Math.floor(0.8 * n - 1), lmax);
+  const fit = (br: number[]) => splineFit(x, y, br, k, w);
+  let lnew = 1;
+  let first: SplineFit | null = null;
+  for (let round = 0; round < 1000; round++) {
+    // step 1
+    let test = 0, last: SplineFit | null = null;
+    while (test < rejlev && lnew <= lopt) {
+      last = fit(equalInfo(x, lnew));
+      if (!first) first = last;
+      let ln = truncSpec(1.1 * lnew);
+      if (ln > lopt && lnew < lopt) ln = lopt;
+      lnew = ln === lnew ? lnew + 1 : ln;
+      test = last.lt;
+    }
+    if (!last) throw new CalcError('Spline2: zu wenige Datenpunkte');
+    const series: SplineFit[] = [last];
+    const lbeg = last.br.length - 1;
+    // step 2
+    let lm = truncSpec(0.95 * lbeg), prev = last;
+    while (lm > 1) {
+      const g = fit(newKnots(x, prev, lm));
+      series.push(g); prev = g;
+      lm = truncSpec(0.95 * lm);
+    }
+    if (lbeg > 1) series.push(first!);
+    // step 3: suggestion
+    let sug = -1, wind = false;
+    for (const key of ['ut', 'lt'] as const) {
+      if (key === 'lt') wind = true;
+      for (let i = 0; i < series.length - 1; i++) {
+        if (!series[i].singular && series[i][key] > rejlev && series[i + 1][key] < rejlev) sug = i;
+      }
+      if (lbeg === 1 && series[series.length - 1][key] > rejlev) sug = series.length - 1;
+      if (sug >= 0) { if (key === 'ut') wind = false; break; }
+    }
+    if (sug < 0) {
+      sug = 0;
+      series.forEach((sf, i) => { if (sf.s < series[sug].s) sug = i; });
+    }
+    if (wind) {
+      let lo2 = truncSpec(1.1 * lbeg);
+      if (lo2 === lbeg) lo2++;
+      if (lo2 <= limit) { lopt = lo2; lnew = lo2; continue; }
+    }
+    return series[sug];
+  }
+  throw new CalcError('Spline2: Suche nicht beendet');
 }
 
 function spline2(x: number[], y: number[], k: number, w: number[] | undefined, spec: number | number[]): SplineFit {
   const order = x.map((_, i) => i).sort((a2, b2) => x[a2] - x[b2]);
-  const xs = order.map(i => x[i]), ys = order.map(i => y[i]), ws = w ? order.map(i => w[i]) : undefined;
-  const a0 = xs[0], a1 = xs[xs.length - 1];
+  let xs = order.map(i => x[i]), ys = order.map(i => y[i]);
+  let ws = w ? order.map(i => 1 / (w[i] * w[i])) : xs.map(() => 1);
   if (Array.isArray(spec)) {
-    // given knots: they must cover the data
+    // given break points: only the data within them are fitted (as Mathcad); weights 1/w² (w = standard deviation)
     const kn = Array.from(new Set(spec)).sort((p, q) => p - q);
-    if (kn[0] > a0) kn.unshift(a0);
-    if (kn[kn.length - 1] < a1) kn.push(a1);
+    if (kn.length < 2) throw new CalcError('Spline2: mindestens zwei Knoten nötig');
+    const keep = xs.map((v, i) => (v >= kn[0] && v <= kn[kn.length - 1] ? i : -1)).filter(i => i >= 0);
+    xs = keep.map(i => xs[i]); ys = keep.map(i => ys[i]); ws = keep.map(i => ws[i]);
     return splineFit(xs, ys, kn, k, ws);
   }
-  // automatic, phase 1 (as Mathcad, confirmed with its stored results): knots at the index quantiles of the
-  // data, the smallest number of intervals whose residuals show no positive autocorrelation (P(d_U ≤ DW) > level)
-  const level = spec;
-  const quantileKnots = (mm: number) => Array.from({ length: mm + 1 }, (_, q) => {
-    const pos = (xs.length - 1) * q / mm, i = Math.min(Math.floor(pos), xs.length - 2);
-    return xs[i] + (pos - i) * (xs[i + 1] - xs[i]);
-  });
-  for (let mm = 1; mm <= Math.min(60, Math.floor((xs.length - k - 2) / 2)); mm++) {
-    let q: SplineFit;
-    try { q = splineFit(xs, ys, quantileKnots(mm), k); } catch { break; }
-    if (q.lo > level) return q;
-  }
-  // phase 2 (Mathcad then optimises the knot positions; its method is not documented): approximation by
-  // adding intervals and redistributing the knots after de Boor (NEWNOT)
-  let m = 1, f = splineFit(xs, ys, [a0, a1], k);
-  while (f.lo < level) {
-    const next = newKnots(f, m + 1);
-    let g: SplineFit;
-    try { g = splineFit(xs, ys, next, k); } catch { break; }
-    m++; f = g;
-  }
-  return f;
+  // automatic knots: Mathcad's results do not depend on the weights here (observed), so none are used
+  return spline2Search(xs, ys, k, xs.map(() => 1), spec);
 }
 
 const splineVector = (f: SplineFit): Matrix =>
-  col([f.k + 1, f.br.length - 1, ...f.br, ...f.c, f.s, 0, f.dw, f.hi, f.lo]);
+  col([f.k + 1, f.br.length - 1, ...f.br, ...f.c, f.s, 0, f.dw, f.lt, f.ut]);
 
 /** Read a Spline2 result vector back. */
 function readSpline(v: Val): { k: number; br: number[]; c: number[]; stats: number[] } {
@@ -461,9 +558,7 @@ export const EXTRA_BUILTINS: Record<string, Builtin> = {
       else if (isMatrix(a2)) spec = nums(a2, 'Spline2');
       else spec = toNumber(a2, 'Niveau');
     }
-    // with automatic knots Mathcad's result does not depend on the weights (observed in its stored results);
-    // with given knots they weight the residuals by 1/w² (not confirmed exactly by Mathcad's results)
-    return splineVector(spline2(x, y, k, Array.isArray(spec) && w ? w.map(v => 1 / (v * v)) : undefined, spec));
+    return splineVector(spline2(x, y, k, w, spec));
   },
   DWS: (args) => { nargs('DWS', args, 1); return readSpline(args[0]).stats[2]; },
   Binterp: (args) => {

@@ -64,8 +64,8 @@ describe('Mathcad Prime (.mcdx)', () => {
       expect(r, name).toBeDefined();
       expect(`${name}: ${r.match}/${r.total}`).toBe(`${name}: ${r.total}/${r.total}`);
     }
-    // overall: at least 95 % of all stored results reproduced (rest: Spline2/DWS, eigenvector signs, Grubbs on matrices)
-    expect(m / t).toBeGreaterThan(0.95);
+    // every result stored by Mathcad Prime is reproduced
+    expect(`${m}/${t}`).toBe(`${t}/${t}`);
   });
 
   it('additional sample files (optional, MATHCAD_SAMPLES)', { timeout: 600000 }, async () => {
