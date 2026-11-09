@@ -141,6 +141,20 @@ describe('Offene Punkte: Import', () => {
     const m = maths(ws);
     expect(new Set([m[0].src.split(' ')[0], m[1].src.split(' ')[0]]).size).toBe(2);
     expect(computeWorksheet(ws).results[m[2].id].resultText).toBe('3');
+    // the spelling a_b keeps its name, a-b is renamed – and the renaming is reported
+    expect(m[1].src).toBe('a_b := 2');
+    expect(ws.source?.warnings.join(' ')).toMatch(/Name „a-b“ heißt in FormelWerk „a_b2“/);
+  });
+  it('Umbenennung nimmt keiner echten Variablen den Namen weg (a_b2 existiert schon)', async () => {
+    const def = (n: string, v: number, top: number) => region(top, top, `<ml:define><ml:id>${n}</ml:id><ml:real>${v}</ml:real></ml:define>`);
+    const ev = (n: string, top: number) => region(top, top, `<ml:eval><ml:id>${n}</ml:id></ml:eval>`);
+    const ws = await load(xmcd(def('a.b', 1, 10) + def('a_b', 2, 40) + def('a_b2', 3, 70) + ev('a.b', 100) + ev('a_b', 130) + ev('a_b2', 160)));
+    const m = maths(ws);
+    const res = computeWorksheet(ws);
+    expect(m.slice(3).map(r => res.results[r.id].resultText)).toEqual(['1', '2', '3']);
+    expect(m[2].src).toBe('a_b2 := 3');
+    expect(m[0].src).toBe('a_b3 := 1');
+    expect(ws.source?.warnings.join(' ')).toMatch(/„a\.b“ heißt in FormelWerk „a_b3“/);
   });
   it('Einheiten mit labels="UNIT", die sonst Variablennamen sind', async () => {
     const ws = await load(xmcd(region(1, 10, '<ml:eval><ml:apply><ml:mult/><ml:real>2</ml:real><ml:id labels="UNIT">mil</ml:id></ml:apply></ml:eval>')));
@@ -157,5 +171,13 @@ describe('Offene Punkte: Import', () => {
     expect(html).toContain('<ul><li>Eins</li><li>Zwei</li></ul>');
     expect(html).toContain('<a href="https://example.org">Link</a>');
     expect(html).toContain('<code>q := 2</code>');
+  });
+  it('Formel-Region im Text (Mathcad 15) wird als eigene, berechnete Formel übernommen', async () => {
+    const txt = `<region region-id="1" left="0" top="10" width="300" height="20"><text><p>Einheit definieren: <region region-id="2" left="180" top="12" width="70" height="16" align-y="22"><math><ml:globalDefine><ml:id>kJ</ml:id><ml:apply><ml:mult/><ml:real>1000</ml:real><ml:id>joule</ml:id></ml:apply></ml:globalDefine></math></region></p></text></region>`;
+    const ws = await load(xmcd(txt + region(3, 60, '<ml:eval><ml:apply><ml:div/><ml:apply><ml:mult/><ml:real>2</ml:real><ml:id>kJ</ml:id></ml:apply><ml:id>joule</ml:id></ml:apply></ml:eval>')));
+    const m = maths(ws);
+    expect(m.map(r => r.src)).toEqual(['kJ ≡ 1000 joule', '2 kJ/joule =']);
+    expect(computeWorksheet(ws).results[m[1].id].resultText).toBe('2000');
+    expect(ws.source?.warnings.join(' ')).toMatch(/als eigene Formel übernommen/);
   });
 });

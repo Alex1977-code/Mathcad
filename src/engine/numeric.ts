@@ -67,52 +67,75 @@ export function integrate(f: (x: number) => number, a: number, b: number, tol = 
     throw new CalcError('Integrand nicht endlich');
   };
   type Seg = { a: number; b: number; v: number; e: number; abs: number };
-  const first = gk15(guard, lo, hi);
-  const segs: Seg[] = [{ a: lo, b: hi, v: first[0], e: first[1], abs: first[2] }];
-  for (let it = 0; it < 600; it++) {
-    let total = 0, err = 0, abs = 0, worst = 0;
-    for (let i = 0; i < segs.length; i++) {
-      total += segs[i].v; err += segs[i].e; abs += segs[i].abs;
-      if (segs[i].e > segs[worst].e) worst = i;
+  /** Adaptive Gauss–Kronrod on [l, h]: value and whether the error estimate reached the tolerance. */
+  const core = (l: number, h: number): { v: number; conv: boolean; err: number } => {
+    const first = gk15(guard, l, h);
+    const segs: Seg[] = [{ a: l, b: h, v: first[0], e: first[1], abs: first[2] }];
+    for (let it = 0; it < 600; it++) {
+      let total = 0, err = 0, abs = 0, worst = 0;
+      for (let i = 0; i < segs.length; i++) {
+        total += segs[i].v; err += segs[i].e; abs += segs[i].abs;
+        if (segs[i].e > segs[worst].e) worst = i;
+      }
+      // relative to the result, but never stricter than relative to ∫|f| (results near 0)
+      if (err <= tol * Math.max(Math.abs(total), abs * 1e-3) || err < 1e-300) return { v: total, conv: true, err };
+      const sg = segs[worst];
+      const m = (sg.a + sg.b) / 2;
+      if (m <= sg.a || m >= sg.b) return { v: total, conv: false, err };
+      const L = gk15(guard, sg.a, m), R = gk15(guard, m, sg.b);
+      segs.splice(worst, 1, { a: sg.a, b: m, v: L[0], e: L[1], abs: L[2] }, { a: m, b: sg.b, v: R[0], e: R[1], abs: R[2] });
     }
-    // relative to the result, but never stricter than relative to ∫|f| (results near 0)
-    if (err <= tol * Math.max(Math.abs(total), abs * 1e-3) || err < 1e-300) return total;
-    const s = segs[worst];
-    const m = (s.a + s.b) / 2;
-    if (m <= s.a || m >= s.b) return total + endCorrection(segs);
-    const l = gk15(guard, s.a, m), r = gk15(guard, m, s.b);
-    segs.splice(worst, 1, { a: s.a, b: m, v: l[0], e: l[1], abs: l[2] }, { a: m, b: s.b, v: r[0], e: r[1], abs: r[2] });
-  }
-  return segs.reduce((t, s) => t + s.v, 0) + endCorrection(segs);
+    return { v: segs.reduce((t, x) => t + x.v, 0), conv: false, err: segs.reduce((t, x) => t + x.e, 0) };
+  };
+
+  /** The integrand grows without bound towards the end point e (dir = +1: e is the lower end). */
+  const singularAt = (e: number, dir: number, w: number): boolean => {
+    const val = (d: number) => { try { return Math.abs(g(e + dir * w * d)); } catch { return Infinity; } };
+    const f1 = val(1e-4), f2 = val(1e-8), f3 = val(1e-12);
+    if (!isFinite(f1)) return false;
+    return !isFinite(f3) || (f3 > f2 && f2 > f1 && f3 > 2 * f1);
+  };
 
   /**
-   * Not converged: usually an integrable singularity at an end point (x^p with −1 < p < 0), whose tiny
-   * last segment GK cannot resolve. There the integrand follows a power law; its exact integral replaces
-   * the estimate of that segment.
+   * Integrable singularity at one end point, where the bisection ends at the last representable number
+   * (e.g. (1−x)^−0.95 near x = 1): integrals I(ε) that leave out [e, e±ε] for ε = 10⁻³, 10⁻⁶, 10⁻⁹ of the
+   * interval follow I0 − C·ε^s; Aitken's Δ² gives I0. A fourth ε checks that the power law really holds.
    */
-  function endCorrection(ss: Seg[]): number {
-    let corr = 0;
-    for (const atLo of [true, false]) {
-      const e = atLo ? lo : hi;
-      const seg = ss.reduce<Seg | null>((best, x) => ((atLo ? x.a === lo : x.b === hi) && (!best || x.e > best.e) ? x : best), null);
-      if (!seg || !isFinite(e)) continue;
-      const w = seg.b - seg.a;
-      try {
-        const d1 = w / 2, d2 = w / 8;
-        const f1 = g(atLo ? e + d1 : e - d1), f2 = g(atLo ? e + d2 : e - d2);
-        if (!(isFinite(f1) && isFinite(f2)) || f1 === 0 || f1 * f2 <= 0) continue;
-        const p = Math.log(f2 / f1) / Math.log(d2 / d1);
-        if (!(p > -1 && p < -0.05)) continue;
-        const C = f1 / Math.pow(d1, p);
-        const exact = C * Math.pow(w, p + 1) / (p + 1);
-        // only when the power law describes the segment well (three points agree)
-        const d3 = w / 32, f3 = g(atLo ? e + d3 : e - d3);
-        if (!(Math.abs(C * Math.pow(d3, p) - f3) <= 1e-3 * Math.abs(f3))) continue;
-        corr += exact - seg.v;
-      } catch { /* keep the estimate */ }
+  const extrapolate = (l: number, h: number, atLo: boolean): number | null => {
+    const w = h - l;
+    const I: number[] = [];
+    for (const k of [1e-3, 1e-6, 1e-9, 1e-12]) {
+      const e = k * w;
+      const a2 = atLo ? l + e : l, b2 = atLo ? h : h - e;
+      if (!(a2 > l || b2 < h)) return null;
+      const r = core(a2, b2);
+      // close to the singularity the integrand is only known to a few digits (1 − x rounds): accept a small error
+      if (!(r.conv || r.err <= 1e-7 * Math.abs(r.v)) || !isFinite(r.v)) return null;
+      I.push(r.v);
     }
-    return corr;
+    const [I1, I2, I3, I4] = I;
+    const q = (I3 - I2) / (I2 - I1);
+    if (!(q > 0 && q < 1) || !isFinite(q)) return null;
+    const I0 = I3 + (I3 - I2) * q / (1 - q);
+    // plausibility: the fourth value must lie on the same power law
+    const pred4 = I3 + (I3 - I2) * q;
+    if (!(Math.abs(I4 - pred4) <= 1e-3 * Math.abs(I0 - I3) + 1e-12 * Math.abs(I0))) return null;
+    return I0;
+  };
+
+  const r = core(lo, hi);
+  if (r.conv) return r.v;
+  const w = hi - lo;
+  const sLo = singularAt(lo, 1, w), sHi = singularAt(hi, -1, w);
+  if (sLo && sHi) {
+    const m = (lo + hi) / 2;
+    const left = extrapolate(lo, m, true), right = extrapolate(m, hi, false);
+    if (left !== null && right !== null) return left + right;
+  } else if (sLo || sHi) {
+    const x = extrapolate(lo, hi, sLo);
+    if (x !== null) return x;
   }
+  return r.v;
 }
 
 /** Central difference of order n with step h (error O(h²)). */

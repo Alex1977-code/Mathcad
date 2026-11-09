@@ -2,7 +2,7 @@
 import JSZip from 'jszip';
 import { emptyWorksheet, newId, type PlotTrace, type Region, type Worksheet } from '../engine/model';
 import { toText } from '../engine/serialize';
-import { collectDefinedNames, convertExpr, kids, local, child, resetNameRegistry, type ConvertCtx } from './mathml';
+import { collectDefinedNames, convertExpr, kids, local, child, prepareNames, resetNameRegistry, type ConvertCtx } from './mathml';
 import { alignStyle, bytesToBase64, coord, defaultXmlParser, pushMath, escapeHtml, imageMime, mathRegionFrom, type XmlParser } from './common';
 
 const PALETTE = ['#2563eb', '#dc2626', '#16a34a', '#9333ea', '#ea580c', '#0891b2', '#db2777', '#4b5563'];
@@ -88,6 +88,7 @@ export async function importMcdx(data: ArrayBuffer | Uint8Array, name: string, p
   ws.settings.fontSize = 12.5;
   const warnings: string[] = [];
   resetNameRegistry();
+  warnings.push(...prepareNames(root));
   const ctx: ConvertCtx = { warnings, definedNames: collectDefinedNames(root), unknown: new Set() };
 
   // settings

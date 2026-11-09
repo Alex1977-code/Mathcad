@@ -40,8 +40,8 @@ function cleanPart(s: string, isSub: boolean): string {
   return out;
 }
 
-/** Read the identifier name from an <ml:id> element (handles Prime XAML subscripts). */
-export function idName(e: Element): string {
+/** FormelWerk name of an <ml:id> and the original Mathcad spelling (handles Prime XAML subscripts). */
+function rawIdName(e: Element): { name: string; original: string; shown: string } {
   let base = '', sub = '';
   const span = kids(e).find(c => c.localName === 'Span');
   if (span) {
@@ -65,23 +65,47 @@ export function idName(e: Element): string {
     if (s) name = name.includes('_') ? `${name}.${s}` : `${name}_${s}`;
   }
   name = NAME_FIX[name] ?? name;
-  return uniqueName(name, `${base}\u0000${sub}`);
+  return { name, original: `${base}\u0000${sub}`, shown: sub.trim() ? `${base || '(leer)'}[${sub.trim()}]` : base || '(leer)' };
+}
+
+/** Read the identifier name from an <ml:id> element. */
+export function idName(e: Element): string {
+  const r = rawIdName(e);
+  return names.byOriginal.get(r.original) ?? uniqueName(r.name, r.original, r.shown);
 }
 
 /**
- * Different Mathcad names can map to the same FormelWerk name (a-b, a.b, a_b → a_b). Within one import
- * each original name keeps its own name: later ones get a number appended (a_b2).
+ * Different Mathcad names can map to the same FormelWerk name (a-b, a.b, a_b → a_b). Every original
+ * name gets its own FormelWerk name. The names of the whole document are assigned in advance
+ * (prepareNames): a name that already results unchanged from some Mathcad name is never handed out to
+ * another one, so a renamed „a.b“ cannot take „a_b2“ away from a real variable a_b2. Renamings are
+ * reported in the import warnings.
  */
-const names = { byOriginal: new Map<string, string>(), owner: new Map<string, string>() };
-export function resetNameRegistry() { names.byOriginal.clear(); names.owner.clear(); }
-function uniqueName(name: string, original: string): string {
+const names = { byOriginal: new Map<string, string>(), owner: new Map<string, string>(), taken: new Set<string>(), renamed: [] as string[] };
+export function resetNameRegistry() { names.byOriginal.clear(); names.owner.clear(); names.taken.clear(); names.renamed = []; }
+function uniqueName(name: string, original: string, shown: string): string {
   const known = names.byOriginal.get(original);
   if (known) return known;
   let n = name;
-  for (let k = 2; names.owner.has(n) && names.owner.get(n) !== original; k++) n = `${name}${k}`;
+  if (names.owner.has(n) && names.owner.get(n) !== original) {
+    for (let k = 2; names.owner.has(n) || names.taken.has(n); k++) n = `${name}${k}`;
+    names.renamed.push(`Name „${shown}“ heißt in FormelWerk „${n}“ („${name}“ ist schon durch einen anderen Mathcad-Namen belegt)`);
+  }
   names.byOriginal.set(original, n);
   names.owner.set(n, original);
   return n;
+}
+
+/** Assign names for all identifiers of a document (see uniqueName); returns the renaming notes. */
+export function prepareNames(root: Element): string[] {
+  const all = Array.from(root.getElementsByTagNameNS('*', 'id'));
+  const raws = all.map(rawIdName);
+  // every name some identifier produces unchanged is reserved
+  for (const r of raws) names.taken.add(r.name);
+  // the spelling identical to the FormelWerk name has priority (a_b keeps a_b, a.b becomes a_b2)
+  for (const r of raws) if (r.original === `${r.name}\u0000` && !names.owner.has(r.name)) { names.owner.set(r.name, r.original); names.byOriginal.set(r.original, r.name); }
+  all.forEach(e => idName(e));
+  return names.renamed;
 }
 
 /* -------------------------------- expressions ------------------------------- */

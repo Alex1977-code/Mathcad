@@ -575,6 +575,13 @@ describe('Offene Punkte: Rechenkern', () => {
   it('Integral mit starker Randsingularität', () => {
     expect(si(lastVal(['int(x^(-0.99), x, 0, 1) =']))).toBeCloseTo(100, 6);
     expect(si(lastVal(['int(x^(-0.9), x, 0, 1) =']))).toBeCloseTo(10, 8);
+    // right end: 1 − x rounds near x = 1 → Aitken extrapolation of I(ε), ε = 10⁻³, 10⁻⁶, 10⁻⁹ (check with 10⁻¹²)
+    expect(si(lastVal(['int((1-x)^(-0.95), x, 0, 1) =']))).toBeCloseTo(20, 5);
+    // both ends: B(0.1, 0.1) = 19.7146394890…
+    expect(si(lastVal(['int(x^(-0.9)*(1-x)^(-0.9), x, 0, 1) =']))).toBeCloseTo(19.7146, 3);
+    // no singularity: unchanged
+    expect(si(lastVal(['int(x^2, x, 0, 3) =']))).toBe(9);
+    expect(si(lastVal(['int(e^(-x)*cos(x), x, 0, ∞) =']))).toBeCloseTo(0.5, 12);
   });
   it('Zeilenvektor wachsen lassen', () => {
     expect(last(['g(n) :=\n  v[0,0] ← 0\n  v[0,1] ← 1\n  for k ∈ 2..n\n    v[k] ← k\n  v', 'g(5) ='])).toBe('[0, 1, 2, 3, 4, 5]');
@@ -587,5 +594,31 @@ describe('Offene Punkte: Rechenkern', () => {
     expect(s.runToEnd(ws).results[`r61`].resultText).toBe('61');
     ws.regions[61] = { ...ws.regions[61], src: 'M[1, 0] =' } as never;
     expect(s.runToEnd(ws).results[`r61`].resultText).toBe('60');
+    // the remaining snapshots are spread over the sheet (no large gaps), the first one is kept
+    const kept = (s as unknown as { snaps: unknown[] }).snaps.map((x, i) => (x ? i : -1)).filter(i => i >= 0);
+    expect(kept[0]).toBe(0);
+    const gaps = kept.slice(1).map((k, i) => k - kept[i]);
+    expect(Math.max(...gaps)).toBeLessThanOrEqual(3 * Math.ceil(62 / kept.length));
+  });
+});
+
+describe('Abgleich mit Mathcad bei Anzeigeeinheiten', () => {
+  const L = [0, 1, 0, 0, 0, 0, 0, 0, 0], M = [1, 0, 0, 0, 0, 0, 0, 0, 0], T = [0, 0, 1, 0, 0, 0, 0, 0, 0], N0 = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+  const exp = (re: number, dims: number[]) => ({ kind: 'scalar' as const, v: { re, dims } });
+  it('Prime: Resteinheit (kN·m in kN angezeigt → m)', async () => {
+    const { checkResult } = await import('../src/engine/verify');
+    const ratio = lastVal(['x := 1345.4077 m']); // value/kN with the unit m left over
+    const kN = [1, 1, -2, 0, 0, 0, 0, 0, 0];
+    expect(checkResult(ratio, exp(1345.4077, L), kN)).toBe('match');
+    expect(checkResult(ratio, exp(1346.0, L), kN)).toBe('mismatch');          // other number (4·10⁻⁴), same unit
+    expect(checkResult(ratio, exp(1345.4077, M), kN)).toBe('mismatch');       // other dimension
+  });
+  it('Mathcad 15: Dimension der ganzen Größe (15000 cm² → L²)', async () => {
+    const { checkResult } = await import('../src/engine/verify');
+    expect(checkResult(15000, exp(15000, [0, 2, 0, 0, 0, 0, 0, 0, 0]), [0, 2, 0, 0, 0, 0, 0, 0, 0])).toBe('match');
+    expect(checkResult(15000, exp(15000, N0), [0, 2, 0, 0, 0, 0, 0, 0, 0])).toBe('match');
+    expect(checkResult(15000, exp(15010, N0), [0, 2, 0, 0, 0, 0, 0, 0, 0])).toBe('mismatch');
+    // „2 s = ms“ against a stored „2000 m“: wrong dimension
+    expect(checkResult(2000, exp(2000, L), T)).toBe('mismatch');
   });
 });

@@ -367,8 +367,8 @@ export class WorksheetEngine {
     const shows = (p.kind === 'eval' || (p.kind === 'define' && !!p.show)) && !random;
     if (exp && shows) {
       const val = this.lastValue;
-      const ignoreDims = (p.kind === 'eval' && !!p.unit) || (p.kind === 'define' && !!p.show?.unit);
-      res.check = { status: res.error || val === undefined ? 'mismatch' : checkResult(val, exp, ignoreDims, usesIterative(p, this.iterativeVars)), expected: expectedToText(exp, this.fmt.decimals + 1) };
+      const withUnit = (p.kind === 'eval' && !!p.unit) || (p.kind === 'define' && !!p.show?.unit);
+      res.check = { status: res.error || val === undefined ? 'mismatch' : checkResult(val, exp, withUnit ? this.lastUnitDims ?? undefined : undefined, usesIterative(p, this.iterativeVars)), expected: expectedToText(exp, this.fmt.decimals + 1) };
     }
     if (r.imported?.symbolic) {
       try { res.symbolicLatex = toLatex(parseExpression(r.imported.symbolic), this.latexCtx(scope)); } catch { /* ignore */ }
@@ -413,6 +413,8 @@ export class WorksheetEngine {
 
   lastValue: Val | undefined;
   lastConverted: Val | undefined;
+  /** Dimensions of the display unit of the last conversion (for the unit-aware comparison with Mathcad). */
+  lastUnitDims: number[] | null = null;
   /** Variables depending on random numbers (excluded from verification). */
   randomVars = new Set<string>();
   /** Variables computed by iterative numerical methods (compared with Mathcad's TOL). */
@@ -446,11 +448,13 @@ export class WorksheetEngine {
         };
         const out = isMatrix(v) ? math.map(v as Matrix, (x: unknown) => conv(x as Val)) as Matrix : conv(v);
         this.lastConverted = out;
+        this.lastUnitDims = (u as Unit).dimensions.slice();
         return formatValue(out, this.fmt);
       }
     }
     const uv = this.ev.eval(unitNode, scope);
     if (isFn(uv) || isRange(uv) || typeof uv === 'string' || isMatrix(uv)) throw new CalcError('Ungültige Anzeigeeinheit');
+    this.lastUnitDims = isUnit(uv) ? (uv as Unit).dimensions.slice() : [0, 0, 0, 0, 0, 0, 0, 0, 0];
     // 0 is compatible with every unit
     if (v === 0) { this.lastConverted = 0; return formatValue(0, this.fmt); }
     const ratio = isMatrix(v) ? math.map(v as Matrix, (x: unknown) => this.ev.divide(x as Val, uv, false) as never) as Matrix : this.ev.divide(v, uv, false);
@@ -657,8 +661,10 @@ export class ComputeSession {
   }
 
   /**
-   * Snapshot before region i. If the snapshots would keep too much memory alive, older ones are thinned
-   * out (every second one) – recent snapshots matter most, because edits are usually further down.
+   * Snapshot before region i. If the snapshots would keep more matrix elements alive than the budget,
+   * snapshots are dropped one by one, always the one whose neighbours are closest together. The remaining
+   * snapshots stay spread evenly over the sheet, so an edit anywhere resumes at most about
+   * (number of regions / number of snapshots) regions earlier. The snapshot before the first region is kept.
    */
   private takeSnapshot(eng: WorksheetEngine, i: number) {
     const budget = this.opts.snapshotBudget ?? 4e6;
@@ -671,13 +677,19 @@ export class ComputeSession {
     }
     this.snapWeight += add;
     if (this.snapWeight <= budget) return;
-    for (let round = 0; round < 12 && this.snapWeight > budget; round++) {
-      const idx = this.snaps.map((x, k) => (x && k > 0 && k < i ? k : -1)).filter(k => k > 0);
-      if (!idx.length) break;
-      idx.forEach((k, n) => { if (n % 2 === 0) this.snaps[k] = undefined; });
+    for (let guard = 0; guard < 1000 && this.snapWeight > budget; guard++) {
+      const idx: number[] = [];
+      this.snaps.forEach((x, k) => { if (x) idx.push(k); });
+      // candidates: everything except the first snapshot and the one just taken
+      let best = -1, bestGap = Infinity;
+      for (let n = 1; n < idx.length - 1; n++) {
+        const gap = idx[n + 1] - idx[n - 1];
+        if (gap < bestGap) { bestGap = gap; best = idx[n]; }
+      }
+      if (best < 0) { this.snaps[i] = undefined; this.snapWeight = ComputeSession.weigh(this.snaps); break; }
+      this.snaps[best] = undefined;
       this.snapWeight = ComputeSession.weigh(this.snaps);
     }
-    if (this.snapWeight > budget) { this.snaps[i] = undefined; this.snapWeight = ComputeSession.weigh(this.snaps); }
     this.counted = new WeakSet();
     for (const x of this.snaps) if (x) for (const v of x.vars.values()) if (isMatrix(v)) this.counted.add(v as object);
   }

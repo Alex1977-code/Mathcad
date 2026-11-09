@@ -1,13 +1,17 @@
 /** Import of Mathcad 11–15 worksheets (.xmcd, XML). */
 import { emptyWorksheet, newId, type Region, type Worksheet } from '../engine/model';
-import { collectDefinedNames, convertMathElement, kids, local, child, resetNameRegistry, type ConvertCtx } from './mathml';
+import { collectDefinedNames, convertMathElement, kids, local, child, prepareNames, resetNameRegistry, type ConvertCtx } from './mathml';
 import { stmtToText } from '../engine/serialize';
 import { alignStyle, base64ToBytes, bytesToBase64, coord, defaultXmlParser, pushMath, escapeHtml, gunzip, imageMime, mathRegionFrom, type XmlParser } from './common';
 
 /** Mathcad 11–15 coordinates are in points (1/72 in); we use CSS pixels (1/96 in). */
 const SCALE = 96 / 72;
 
-function textToHtml(textEl: Element, ctx?: ConvertCtx): string {
+/**
+ * @param embedded receives formula regions embedded in the text (Mathcad 15 calculates them like any
+ *   other formula); they are imported as separate formula regions at their own position.
+ */
+function textToHtml(textEl: Element, ctx?: ConvertCtx, embedded?: Element[]): string {
   const conv = (n: ChildNode): string => {
     if (n.nodeType === 3) return escapeHtml(n.textContent ?? '');
     if (n.nodeType !== 1) return '';
@@ -49,6 +53,10 @@ function textToHtml(textEl: Element, ctx?: ConvertCtx): string {
         } catch { /* ignore */ }
         return '';
       }
+      case 'region': {
+        if (embedded && kids(e).some(c => local(c) === 'math')) { embedded.push(e); return '&emsp;&emsp;'; }
+        return inner();
+      }
       case 'inlineAttr': case 'blockAttr': return '';
       default: return inner();
     }
@@ -82,6 +90,7 @@ export async function importXmcd(xml: string, name: string, parseXml: XmlParser 
   ws.settings.fontSize = 12;
   const warnings: string[] = [];
   resetNameRegistry();
+  warnings.push(...prepareNames(root));
   const ctx: ConvertCtx = { warnings, definedNames: collectDefinedNames(root), unknown: new Set() };
 
   // settings
@@ -129,8 +138,17 @@ export async function importXmcd(xml: string, name: string, parseXml: XmlParser 
         break;
       }
       case 'text': {
-        const html = textToHtml(content, ctx);
+        const embedded: Element[] = [];
+        const html = textToHtml(content, ctx, embedded);
         if (html) regions.push({ id: newId(), type: 'text', x, y, w: Math.max(w, 60), html });
+        for (const er of embedded) {
+          const ex = coord(er.getAttribute('left')) * SCALE, ey = coord(er.getAttribute('top')) * SCALE;
+          const m = mathRegionFrom(kids(er).find(c => local(c) === 'math')!, ex, ey, ctx);
+          const ay = parseFloat(er.getAttribute('align-y') ?? '');
+          if (Number.isFinite(ay) && Math.abs(ay) < 1e6) m.oy = ay * SCALE - ey;
+          pushMath(regions, m);
+          warnings.push(`Formel im Text bei (${Math.round(ex)}, ${Math.round(ey)}) als eigene Formel übernommen: ${m.src.split('\n')[0].slice(0, 50)}`);
+        }
         break;
       }
       case 'plot': {

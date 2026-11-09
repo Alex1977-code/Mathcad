@@ -34,15 +34,21 @@ function sameDims(a: number[], b: number[]): boolean {
   return true;
 }
 
-let IGNORE_DIMS = false;
+/** Dimensions of the display unit, when the result is shown in one (the value compared is value/unit). */
+let UNIT_DIMS: number[] | null = null;
 
 function scalarMatch(v: Val, e: ExpScalar, scale: number): boolean {
   const s = scalarOf(v);
   if (!s) return false;
   // a dimensionless zero in Mathcad may come back without units
-  if (!IGNORE_DIMS && !sameDims(s.dims, e.dims) && !(s.re === 0 && e.re === 0)) return false;
-  // with a display unit our value is the ratio value/unit; Mathcad stores the unit left over (kN·m shown in kN → m)
-  if (IGNORE_DIMS && !sameDims(s.dims, e.dims) && !sameDims(s.dims, [0, 0, 0, 0, 0, 0, 0, 0, 0]) && s.re !== 0) return false;
+  if (!UNIT_DIMS && !sameDims(s.dims, e.dims) && !(s.re === 0 && e.re === 0)) return false;
+  // with a display unit the number compared is value/unit (the displayed number). Its dimension check is
+  // unit-aware for both conventions: Prime stores the unit left over (kN·m shown in kN → m), Mathcad 15 the
+  // dimension of the whole quantity (left over + display unit). Anything else is a mismatch.
+  if (UNIT_DIMS && s.re !== 0) {
+    const full = s.dims.map((d, i) => d + (UNIT_DIMS![i] ?? 0));
+    if (!sameDims(s.dims, e.dims) && !sameDims(full, e.dims)) return false;
+  }
   const sc = Math.max(scale, Math.abs(e.re), Math.abs(e.im ?? 0));
   return close(s.re, e.re, sc) && close(s.im, e.im ?? 0, sc);
 }
@@ -51,11 +57,11 @@ function scalarMatch(v: Val, e: ExpScalar, scale: number): boolean {
  * @param iterative results of iterative numerical methods (Find, root, integrals) are compared with
  *   Mathcad's own convergence tolerance TOL = 10⁻³ instead of 10⁻⁴.
  */
-export function checkResult(v: Val, exp: Expected, ignoreDims = false, iterative = false): CheckStatus {
+export function checkResult(v: Val, exp: Expected, unitDims?: number[], iterative = false): CheckStatus {
   if (isRange(v)) v = makeMatrix(rangeValues(v).map(x => [x]));
-  IGNORE_DIMS = ignoreDims;
+  UNIT_DIMS = unitDims ?? null;
   REL = iterative ? 1e-3 : 1e-4;
-  try { return checkInner(v, exp); } finally { IGNORE_DIMS = false; REL = 1e-4; }
+  try { return checkInner(v, exp); } finally { UNIT_DIMS = null; REL = 1e-4; }
 }
 
 function checkInner(v: Val, exp: Expected): CheckStatus {
