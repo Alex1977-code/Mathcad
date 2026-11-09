@@ -408,8 +408,20 @@ function spline2(x: number[], y: number[], k: number, w: number[] | undefined, s
     if (kn[kn.length - 1] < a1) kn.push(a1);
     return splineFit(xs, ys, kn, k, ws);
   }
-  // automatic: more intervals while the residuals show positive autocorrelation (P(d_U ≤ DW) < level)
+  // automatic, phase 1 (as Mathcad, confirmed with its stored results): knots at the index quantiles of the
+  // data, the smallest number of intervals whose residuals show no positive autocorrelation (P(d_U ≤ DW) > level)
   const level = spec;
+  const quantileKnots = (mm: number) => Array.from({ length: mm + 1 }, (_, q) => {
+    const pos = (xs.length - 1) * q / mm, i = Math.min(Math.floor(pos), xs.length - 2);
+    return xs[i] + (pos - i) * (xs[i + 1] - xs[i]);
+  });
+  for (let mm = 1; mm <= Math.min(60, Math.floor((xs.length - k - 2) / 2)); mm++) {
+    let q: SplineFit;
+    try { q = splineFit(xs, ys, quantileKnots(mm), k); } catch { break; }
+    if (q.lo > level) return q;
+  }
+  // phase 2 (Mathcad then optimises the knot positions; its method is not documented): approximation by
+  // adding intervals and redistributing the knots after de Boor (NEWNOT)
   let m = 1, f = splineFit(xs, ys, [a0, a1], k);
   while (f.lo < level) {
     const next = newKnots(f, m + 1);
