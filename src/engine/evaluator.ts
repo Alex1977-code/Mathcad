@@ -2,11 +2,12 @@ import type { Complex, Matrix, Unit } from 'mathjs';
 import { walk, type Node, type Stmt } from './ast';
 import { math, lookupUnit } from './units';
 import {
-  CalcError, Scope, isFn, isMatrix, isRange, isUnit, isComplex, makeMatrix, matrixRows,
+  CalcError, Scope, isFn, isMatrix, isRange, isUnit, isComplex, makeMatrix, matrixRows, rowsOf,
   rangeValues, toInt, toNumber, type FnVal, type RangeVal, type Val,
 } from './values';
 import { BUILTINS, LAZY_BUILTINS, CONSTANTS, PHYS_CONSTANTS } from './builtins';
 import { derivative, integrate } from './numeric';
+import { hasOffset, mkQ, qBinary, qNeg, qPow, UnitMismatch, withValue } from './quantity';
 
 export interface EvalOptions {
   origin: number;
@@ -17,6 +18,8 @@ export interface Constraint { node: Node }
 export class Evaluator {
   depth = 0;
   steps = 0;
+  /** Matrices created by indexed assignment that no other variable references (may be mutated in place). */
+  owned = new WeakSet<object>();
   intDepth = 0;
   /** >0 while a solve block iterates (integrals may use a looser tolerance). */
   inSolver = 0;
@@ -34,14 +37,14 @@ export class Evaluator {
       if (pc) return pc();
       const u = lookupUnit(name.slice(1));
       if (u === null) throw new CalcError(`Einheit „${name.slice(1)}“ ist unbekannt`, name);
-      return typeof u === 'number' ? u : (u as Unit).clone();
+      return u as Val;
     }
     const v = scope.get(name);
     if (v !== undefined) return v;
     if (name in CONSTANTS) return CONSTANTS[name]();
     if (name === 'ORIGIN') return this.opts.origin;
     const u = lookupUnit(name);
-    if (u !== null) return typeof u === 'number' ? u : (u as Unit).clone();
+    if (u !== null) return u as Val;
     if (name in BUILTINS || name in LAZY_BUILTINS) {
       const b = BUILTINS[name];
       if (b) return { kind: 'fn', name, params: [], builtin: (args) => b(args, this) } as FnVal;
@@ -137,17 +140,26 @@ export class Evaluator {
         case '!=': return a === b || Math.abs(a - b) <= 1e-12 * Math.max(Math.abs(a), Math.abs(b)) ? 0 : 1;
       }
     }
+    if (isUnit(a) || isUnit(b)) {
+      // fast path for scalar quantities
+      try {
+        const r = qBinary(op, a, b);
+        if (r !== undefined) return r as Val;
+      } catch (e) { if (e instanceof UnitMismatch) throw new CalcError(e.message); throw e; }
+    }
     if (isFn(a) || isFn(b)) throw new CalcError('Funktionen können nicht direkt verrechnet werden – Argumente angeben, z. B. f(x)');
     if (isRange(a) || isRange(b)) throw new CalcError('Bereichsvariable hier nicht erlaubt');
     try {
       switch (op) {
         case '+':
           if (typeof a === 'string' || typeof b === 'string') throw new CalcError('Zeichenketten mit concat() verbinden');
+          if (isMatrix(a) || isMatrix(b)) return this.ew('+', a, b);
           // 0 is compatible with every unit (Mathcad)
           if (a === 0 && isUnit(b)) return b;
           if (b === 0 && isUnit(a)) return a;
           return this.simplify(math.add(a as number, b as number) as Val);
         case '-':
+          if (isMatrix(a) || isMatrix(b)) return this.ew('-', a, b);
           if (b === 0 && isUnit(a)) return a;
           if (a === 0 && isUnit(b)) return math.unaryMinus(b as Unit) as Val;
           return this.simplify(math.subtract(a as number, b as number) as Val);
@@ -174,35 +186,40 @@ export class Evaluator {
         const eq = math.deepEqual(a as Matrix, b as Matrix) as unknown as boolean;
         return (op === '==') === eq ? 1 : 0;
       }
-      return math.map(isMatrix(a) ? a as Matrix : b as Matrix, (_x: unknown, idx: number[]) => {
-        const xa = isMatrix(a) ? (a as Matrix).get(idx) : a;
-        const xb = isMatrix(b) ? (b as Matrix).get(idx) : b;
-        return f(xa as never, xb as never) ? 1 : 0;
-      }) as Matrix;
+      return this.ew(op, a, b);
     }
     return f(a as never, b as never) ? 1 : 0;
   }
 
   multiply(a: Val, b: Val, vec: boolean): Val {
+    if (typeof a === 'number' && typeof b === 'number') return a * b;
+    if (isUnit(a) || isUnit(b)) { const r = qBinary('*', a, b); if (r !== undefined) return r as Val; }
     if (typeof a === 'string' || typeof b === 'string') throw new CalcError('Zeichenketten können nicht multipliziert werden');
     if (isMatrix(a) && isMatrix(b)) {
       const A = a as Matrix, B = b as Matrix;
-      if (vec) return this.simplify(math.dotMultiply(A, B) as Val);
+      if (vec) return this.ew('*', A, B);
       const sa = A.size(), sb = B.size();
       if (sa[1] === 1 && sb[1] === 1 && sa[0] === sb[0] && sa[0] !== 1) {
         // vector · vector  → dot product (Mathcad)
-        return this.simplify(math.dot(A, B) as Val);
+        const ra = rowsOf(A), rb = rowsOf(B);
+        let acc: Val = this.binary('*', ra[0][0], rb[0][0]);
+        for (let i = 1; i < ra.length; i++) acc = this.binary('+', acc, this.binary('*', ra[i][0], rb[i][0]));
+        return acc;
       }
       if (sa[1] !== sb[0]) throw new CalcError(`Matrixdimensionen passen nicht: ${sa.join('×')} · ${sb.join('×')}`);
-    }
+      if (rowsOf(A).some(r => r.some(x => isUnit(x))) || rowsOf(B).some(r => r.some(x => isUnit(x)))) return this.matmul(A, B);
+    } else if (isMatrix(a) || isMatrix(b)) return this.ew('*', a, b);
     return this.simplify(math.multiply(a as number, b as number) as Val);
   }
 
   divide(a: Val, b: Val, vec: boolean): Val {
+    if (typeof a === 'number' && typeof b === 'number' && b !== 0) return a / b;
+    if (isUnit(a) || isUnit(b)) { const r = qBinary('/', a, b); if (r !== undefined) return r as Val; }
     if (typeof a === 'string' || typeof b === 'string') throw new CalcError('Zeichenketten können nicht dividiert werden');
     if (isMatrix(b) && (vec || isMatrix(a))) {
-      if (vec || !this.isSquare(b as Matrix)) return this.simplify(math.dotDivide(a as Matrix, b as Matrix) as Val);
+      if (vec || !this.isSquare(b as Matrix)) return this.ew('/', a, b);
     }
+    if (isMatrix(a) && !isMatrix(b)) return this.ew('/', a, b);
     if (isMatrix(b) && !this.isSquare(b as Matrix)) throw new CalcError('Division durch eine nicht-quadratische Matrix');
     const r = math.divide(a as number, b as number) as Val;
     return this.simplify(r);
@@ -210,13 +227,46 @@ export class Evaluator {
 
   isSquare(m: Matrix) { const s = m.size(); return s.length === 2 && s[0] === s[1]; }
 
+  /** Element-wise operation with broadcasting of scalars (fast path, no mathjs dispatch). */
+  ew(op: string, a: Val, b: Val): Matrix {
+    const A = isMatrix(a) ? rowsOf(a as Matrix) : null, B = isMatrix(b) ? rowsOf(b as Matrix) : null;
+    const R = (A ?? B)!;
+    if (A && B && (A.length !== B.length || A[0].length !== B[0].length)) {
+      throw new CalcError(`Dimensionen passen nicht: ${A.length}×${A[0].length} und ${B.length}×${B[0].length}`);
+    }
+    const out: Val[][] = new Array(R.length);
+    for (let i = 0; i < R.length; i++) {
+      const row = new Array(R[0].length);
+      for (let j = 0; j < R[0].length; j++) row[j] = this.binary(op, A ? A[i][j] : a, B ? B[i][j] : b);
+      out[i] = row;
+    }
+    return makeMatrix(out);
+  }
+
+  /** Matrix product for matrices containing quantities. */
+  matmul(A: Matrix, B: Matrix): Val {
+    const a = rowsOf(A), b = rowsOf(B);
+    const n = a.length, m = b[0].length, k = b.length;
+    const out: Val[][] = [];
+    for (let i = 0; i < n; i++) {
+      const row: Val[] = [];
+      for (let j = 0; j < m; j++) {
+        let acc: Val = this.binary('*', a[i][0], b[0][j]);
+        for (let t = 1; t < k; t++) acc = this.binary('+', acc, this.binary('*', a[i][t], b[t][j]));
+        row.push(acc);
+      }
+      out.push(row);
+    }
+    return n === 1 && m === 1 ? out[0][0] : makeMatrix(out);
+  }
+
   power(a: Val, b: Val, vec: boolean): Val {
     if (isMatrix(b)) {
-      if (vec || !isMatrix(a)) return this.simplify(math.dotPow(a as Matrix, b as Matrix) as Val);
+      if (vec || !isMatrix(a)) return this.ew('^', a, b);
       throw new CalcError('Exponent darf keine Matrix sein');
     }
     if (isMatrix(a)) {
-      if (vec || !this.isSquare(a as Matrix)) return this.simplify(math.dotPow(a as Matrix, b as number) as Val);
+      if (vec || !this.isSquare(a as Matrix)) return this.ew('^', a, b);
       const n = toNumber(b, 'Matrixexponent');
       if (!Number.isInteger(n)) throw new CalcError('Matrixexponent muss ganzzahlig sein');
       let M = a as Matrix;
@@ -227,6 +277,8 @@ export class Evaluator {
     if (isUnit(a)) {
       const ua = a as Unit;
       const e = toNumber(b, 'Exponent');
+      const fast = qPow(ua, e);
+      if (fast !== undefined) return fast as Val;
       if (ua.dimensions.every(d => d === 0)) return Math.pow(ua.value as number, e);
       return this.simplify(math.pow(ua, e) as Val);
     }
@@ -255,6 +307,11 @@ export class Evaluator {
   evalUn(op: string, an: Node, scope: Scope, vec: boolean): Val {
     if (op === 'vec') return this.eval(an, scope, true);
     const a = this.eval(an, scope, vec);
+    if (isUnit(a)) {
+      if (op === 'neg') { const r = qNeg(a); if (r !== undefined) return r as Val; }
+      if (op === 'sqrt') { const r = qPow(a, 0.5); if (r !== undefined) return r as Val; }
+      if (op === 'abs') { const v = (a as unknown as { value: unknown }).value; if (typeof v === 'number' && !hasOffset(a as Unit)) return mkQ(Math.abs(v), (a as unknown as { dimensions: number[] }).dimensions) as Val; }
+    }
     if (typeof a === 'number') {
       if (op === 'neg') return -a;
       if (op === 'sqrt' && a >= 0) return Math.sqrt(a);
@@ -265,7 +322,9 @@ export class Evaluator {
     if (isRange(a)) throw new CalcError('Bereichsvariable hier nicht erlaubt');
     try {
       switch (op) {
-        case 'neg': return math.unaryMinus(a as number) as Val;
+        case 'neg':
+          if (isMatrix(a)) return makeMatrix(rowsOf(a as Matrix).map(r => r.map(x => this.binary('-', 0, x))));
+          return math.unaryMinus(a as number) as Val;
         case 'not': return this.truthy(a) ? 0 : 1;
         case 'fact': {
           if (isMatrix(a)) return math.map(a as Matrix, (x: number) => math.factorial(x)) as Matrix;
@@ -353,7 +412,18 @@ export class Evaluator {
   /** Return a new (or mutated, if owned) matrix with element set. */
   indexSet(base: Val | undefined, idxv: Val[], value: Val, mutate: boolean): Matrix {
     const idx = idxv.map(i => toInt(i, 'Index') - this.opts.origin);
-    if (isMatrix(value) || (base !== undefined && isMatrix(base) && (base as Matrix).toArray().flat().some(x => isMatrix(x)))) {
+    if (mutate && !(base !== undefined && isMatrix(base) && this.owned.has(base as object))) mutate = false;
+    // append to an owned column vector without copying (common in loops: v[i] ← …)
+    if (mutate && base !== undefined && isMatrix(base) && !isMatrix(value) && idx.length === 1) {
+      const m = base as Matrix & { _data: Val[][]; _size: number[] };
+      if (Array.isArray(m._data) && m._size.length === 2 && m._size[1] === 1 && idx[0] >= m._size[0] && Array.isArray(m._data[0])) {
+        for (let k = m._size[0]; k < idx[0]; k++) m._data.push([0]);
+        m._data.push([value]);
+        m._size[0] = idx[0] + 1;
+        return m;
+      }
+    }
+    if (isMatrix(value) || (base !== undefined && isMatrix(base) && hasNested(base as Matrix))) {
       // nested array: rebuild from rows
       const rows: Val[][] = base !== undefined && isMatrix(base) ? matrixRows(base as Matrix).map(r => r.slice()) : (base !== undefined && !isFn(base) && !isRange(base) && typeof base !== 'string' ? [[base]] : [[0]]);
       const c0 = rows[0].length;
@@ -363,7 +433,9 @@ export class Evaluator {
       while (rows.length <= i) rows.push([]);
       for (const r of rows) while (r.length < C) r.push(0);
       rows[i][j] = value;
-      return makeMatrix(rows);
+      const nm = makeMatrix(rows);
+      this.owned.add(nm);
+      return nm;
     }
     if (idx.some(i => i < 0)) throw new CalcError(`Index kleiner als ORIGIN (${this.opts.origin})`);
     let m: Matrix;
@@ -377,6 +449,7 @@ export class Evaluator {
     } else { i = idx[0]; j = idx[1]; }
     if (i >= r || j >= c) m.resize([Math.max(r, i + 1), Math.max(c, j + 1)], 0);
     m.set([i, j], value as number);
+    this.owned.add(m);
     return m;
   }
 
@@ -402,7 +475,7 @@ export class Evaluator {
       } catch (e) { throw translateError(e); }
     }
     const u = lookupUnit(name);
-    if (u !== null && argNodes.length === 1) return this.multiply(typeof u === 'number' ? u : (u as Unit).clone(), this.eval(argNodes[0], scope, vec), vec);
+    if (u !== null && argNodes.length === 1) return this.multiply(u as Val, this.eval(argNodes[0], scope, vec), vec);
     throw new CalcError(`Funktion „${name}“ ist nicht definiert`, name);
   }
 
@@ -470,7 +543,7 @@ export class Evaluator {
   numericFn(body: Node, v: string, scope: Scope, xTemplate: Val): { f: (t: number) => number; probe: (t: number) => Val } {
     const local = new Scope(scope);
     const make = (t: number): Val => {
-      if (isUnit(xTemplate)) { const u = (xTemplate as Unit).clone(); (u as unknown as { value: number }).value = t; return u; }
+      if (isUnit(xTemplate)) return withValue(xTemplate as Unit, t);
       return t;
     };
     const probe = (t: number) => { local.vars.set(v, make(t)); return this.eval(body, local); };
@@ -602,7 +675,7 @@ export class Evaluator {
   }
 
   assign(target: Node, value: Val, scope: Scope): Val {
-    if (target.k === 'id') { scope.vars.set(target.name, value); return value; }
+    if (target.k === 'id') { if (isMatrix(value)) this.owned.delete(value as object); scope.vars.set(target.name, value); return value; }
     if (target.k === 'index' && target.a.k === 'id') {
       const name = target.a.name;
       const own = scope.vars.has(name);
@@ -627,6 +700,14 @@ export class Evaluator {
   }
 }
 
+function hasNested(m: Matrix): boolean {
+  const data = m.valueOf() as unknown as unknown[][];
+  for (const row of data) {
+    if (Array.isArray(row)) { for (const x of row) if (isMatrix(x)) return true; } else if (isMatrix(row)) return true;
+  }
+  return false;
+}
+
 export function cross3(a: Val, b: Val): Val {
   if (!isMatrix(a) || !isMatrix(b)) throw new CalcError('Kreuzprodukt benötigt zwei Vektoren');
   const x = (a as Matrix).toArray().flat() as number[], y = (b as Matrix).toArray().flat() as number[];
@@ -637,6 +718,7 @@ export function cross3(a: Val, b: Val): Val {
 }
 
 export function unitTemplate(u: Unit): Unit {
+  if (!hasOffset(u)) return mkQ(1, (u as unknown as { dimensions: number[] }).dimensions) as Unit;
   const t = u.clone();
   (t as unknown as { value: number }).value = 1;
   return t;

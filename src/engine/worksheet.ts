@@ -2,7 +2,8 @@ import type { Matrix, Unit } from 'mathjs';
 import { walk, type MathStmt, type Node } from './ast';
 import { parseMathRegion, parseExpression, ParseError } from './parser';
 import { Evaluator, translateError, unitTemplate } from './evaluator';
-import { CONSTANTS, isBuiltinFunction, resetRandom } from './builtins';
+import { CONSTANTS, getRandomState, isBuiltinFunction, resetRandom } from './builtins';
+import { getStatsSeed, setStatsSeed } from './stats';
 import { lookupUnit, math } from './units';
 import {
   CalcError, Scope, isFn, isMatrix, isRange, isUnit, isComplex, rangeValues, makeMatrix, toNumber,
@@ -10,7 +11,7 @@ import {
 } from './values';
 import { formatValue, formatReal, type FormatOptions, siUnitFactors, unitFactorsText } from './format';
 import { stmtLatex, toLatex, type LatexCtx } from './latex';
-import { sortRegions, type MathRegion, type PlotRegion, type Worksheet } from './model';
+import { sortRegions, type MathRegion, type PlotRegion, type Region, type Worksheet } from './model';
 import { checkResult, expectedToText, type CheckStatus } from './verify';
 
 export interface RegionError { message: string; culprit?: string; pos?: number; end?: number; kind: 'parse' | 'calc' }
@@ -119,76 +120,90 @@ export class WorksheetEngine {
     };
   }
 
-  compute(): ComputeResult {
-    const t0 = Date.now();
+  /* ------------------------- resumable state -------------------------- */
+
+  inSolve = false;
+  pendingGuesses: { name: string; expr: Node }[] = [];
+  definedBy = new Map<string, string>();
+
+  /** Copy of everything a later region can depend on (used to resume an interrupted or partial run). */
+  snapshot(): EngineSnapshot {
+    return {
+      vars: new Map(this.top.vars),
+      constraints: this.ev.constraints.slice(),
+      guesses: this.ev.guesses.slice(),
+      inSolve: this.inSolve,
+      pendingGuesses: this.pendingGuesses.slice(),
+      randomVars: new Set(this.randomVars),
+      iterativeVars: new Set(this.iterativeVars),
+      definedBy: new Map(this.definedBy),
+      rng: [getRandomState(), getStatsSeed()],
+    };
+  }
+
+  restore(s: EngineSnapshot) {
+    this.top.vars = new Map(s.vars);
+    this.ev.constraints = s.constraints.slice();
+    this.ev.guesses = s.guesses.slice();
+    this.inSolve = s.inSolve;
+    this.pendingGuesses = s.pendingGuesses.slice();
+    this.randomVars = new Set(s.randomVars);
+    this.iterativeVars = new Set(s.iterativeVars);
+    this.definedBy = new Map(s.definedBy);
+    resetRandom(s.rng[0]);
+    setStatsSeed(s.rng[1]);
+  }
+
+  /** Pass 1: global definitions (≡) are evaluated before everything else. */
+  runGlobals(order: Region[], parsed: (r: MathRegion) => MathStmt | ParseError, results: Record<string, RegionResult>) {
     resetRandom(1);
-    const results: Record<string, RegionResult> = {};
-    const order = sortRegions(this.ws.regions);
-    const parsed = new Map<string, MathStmt | ParseError>();
+    setStatsSeed(1);
     for (const r of order) {
-      if (r.type !== 'math') continue;
-      try { parsed.set(r.id, parseMathRegion(r.src)); } catch (e) {
-        if (e instanceof ParseError) parsed.set(r.id, e);
-        else parsed.set(r.id, new ParseError(String((e as Error).message ?? e), 0));
-      }
-    }
-    const definedBy = new Map<string, string>();
-
-    // Pass 1: global definitions (≡)
-    for (const r of order) {
-      const p = parsed.get(r.id);
-      if (r.type === 'math' && p && !(p instanceof ParseError) && p.kind === 'define' && p.global && !r.disabled) {
+      if (r.type !== 'math' || r.disabled) continue;
+      const p = parsed(r);
+      if (!(p instanceof ParseError) && p.kind === 'define' && p.global) {
         results[r.id] = this.runMath(r, p);
-        if (!results[r.id].error) definedBy.set(p.target.name, r.id);
+        if (!results[r.id].error) this.definedBy.set(p.target.name, r.id);
       }
     }
-    // Pass 2: everything in order
-    let inSolve = false;
-    let pendingGuesses: { name: string; expr: Node }[] = [];
-    for (const r of order) {
-      if (r.type === 'math') {
-        const p = parsed.get(r.id)!;
-        if (p instanceof ParseError) {
-          results[r.id] = { id: r.id, kind: undefined, error: { message: p.message, pos: p.pos, end: p.end, kind: 'parse' } };
-          continue;
-        }
-        if (p.kind === 'define' && p.global) continue;
-        // solve blocks
-        if (p.kind === 'expr' && p.expr.k === 'id' && /^given$/i.test(p.expr.name) && !this.top.get(p.expr.name)) {
-          inSolve = true;
-          this.ev.constraints = [];
-          this.ev.guesses = pendingGuesses;
-          pendingGuesses = [];
-          results[r.id] = { id: r.id, kind: 'expr', latex: '\\textbf{Given}', solve: 'given' };
-          continue;
-        }
-        if (inSolve && p.kind === 'expr' && isConstraint(p.expr)) {
-          this.ev.constraints.push({ node: p.expr });
-          results[r.id] = { id: r.id, kind: 'expr', latex: stmtLatex(p, this.latexCtx(this.top)), solve: 'constraint' };
-          continue;
-        }
-        if (r.disabled) {
-          results[r.id] = { id: r.id, kind: p.kind, latex: stmtLatex(p, this.latexCtx(this.top)) };
-          continue;
-        }
-        const res = this.runMath(r, p);
-        if (r.guess && p.kind === 'define' && !p.target.params && !p.target.index && !p.target.multi) {
-          pendingGuesses.push({ name: p.target.name, expr: p.expr });
-          // a guess may depend on arguments of a solver function: not an error at this point
-          if (res.error) { res.error = undefined; res.latex = stmtLatex(p, this.latexCtx(this.top)); }
-        }
-        if (inSolve && usesFind(p)) { res.solve = 'find'; inSolve = false; }
-        results[r.id] = res;
-        if (p.kind === 'define' && !res.error) definedBy.set(p.target.name, r.id);
-      } else if (r.type === 'plot') {
-        results[r.id] = { id: r.id, plot: this.runPlot(r) };
-      }
-    }
+  }
 
-    // variable table
+  /** Pass 2: evaluate one region in worksheet order. */
+  step(r: Region, parsed: (r: MathRegion) => MathStmt | ParseError, globalResults: Record<string, RegionResult>): RegionResult | undefined {
+    if (r.type === 'plot') return { id: r.id, plot: this.runPlot(r) };
+    if (r.type !== 'math') return undefined;
+    const p = parsed(r);
+    if (p instanceof ParseError) return { id: r.id, kind: undefined, error: { message: p.message, pos: p.pos, end: p.end, kind: 'parse' } };
+    if (p.kind === 'define' && p.global) return globalResults[r.id];
+    // solve blocks
+    if (p.kind === 'expr' && p.expr.k === 'id' && /^given$/i.test(p.expr.name) && !this.top.get(p.expr.name)) {
+      this.inSolve = true;
+      this.ev.constraints = [];
+      this.ev.guesses = this.pendingGuesses;
+      this.pendingGuesses = [];
+      return { id: r.id, kind: 'expr', latex: '\\textbf{Given}', solve: 'given' };
+    }
+    if (this.inSolve && p.kind === 'expr' && isConstraint(p.expr)) {
+      this.ev.constraints.push({ node: p.expr });
+      return { id: r.id, kind: 'expr', latex: stmtLatex(p, this.latexCtx(this.top)), solve: 'constraint' };
+    }
+    if (r.disabled) return { id: r.id, kind: p.kind, latex: stmtLatex(p, this.latexCtx(this.top)) };
+    const res = this.runMath(r, p);
+    if (r.guess && p.kind === 'define' && !p.target.params && !p.target.index && !p.target.multi) {
+      this.pendingGuesses.push({ name: p.target.name, expr: p.expr });
+      // a guess may depend on arguments of a solver function: not an error at this point
+      if (res.error) { res.error = undefined; res.latex = stmtLatex(p, this.latexCtx(this.top)); }
+    }
+    if (this.inSolve && usesFind(p)) { res.solve = 'find'; this.inSolve = false; }
+    if (p.kind === 'define' && !res.error) this.definedBy.set(p.target.name, r.id);
+    return res;
+  }
+
+  /** Assemble the final result (variable table, statistics). */
+  finish(results: Record<string, RegionResult>, t0: number): ComputeResult {
     const variables: VariableInfo[] = [];
     for (const [name, v] of this.top.vars) {
-      const regionId = definedBy.get(name) ?? '';
+      const regionId = this.definedBy.get(name) ?? '';
       let info: VariableInfo;
       try {
         if (isFn(v)) {
@@ -215,6 +230,10 @@ export class WorksheetEngine {
       total: checks.length,
     } : undefined;
     return { results, variables, errorCount, millis: Date.now() - t0, verification };
+  }
+
+  compute(): ComputeResult {
+    return new ComputeSession(this.opts).runToEnd(this.ws);
   }
 
   /* ------------------------------ math -------------------------------- */
@@ -278,8 +297,9 @@ export class WorksheetEngine {
             if (cur !== undefined && (isFn(cur) || isRange(cur))) cur = undefined;
             let first = true;
             const shown: Val[] = [];
+            const local = new Scope(scope);
             for (const c of combos) {
-              const local = new Scope(scope);
+              local.vars.clear();
               for (const [k, v] of c) local.set(k, v);
               const value = this.ev.eval(p.expr, local);
               const idx = t.index.map(i => this.ev.eval(i, local));
@@ -544,8 +564,117 @@ function usesFind(p: MathStmt): boolean {
   return found;
 }
 
+export interface EngineSnapshot {
+  vars: Map<string, Val>;
+  constraints: { node: Node }[];
+  guesses: { name: string; expr: Node }[];
+  inSolve: boolean;
+  pendingGuesses: { name: string; expr: Node }[];
+  randomVars: Set<string>;
+  iterativeVars: Set<string>;
+  definedBy: Map<string, string>;
+  rng: [number, number];
+}
+
+export interface Progress { done: number; total: number; resumedAt: number }
+
+/** Everything a region's result depends on besides the state before it. */
+function signature(r: Region): string {
+  const { x: _x, y: _y, oy: _oy, w, h, ...rest } = r as Region & { oy?: number };
+  void _x; void _y; void _oy;
+  return JSON.stringify(r.type === 'plot' ? { ...rest, w, h } : rest);
+}
+
+/**
+ * Incremental, interruptible recalculation.
+ *
+ * The session remembers the result of every region and a snapshot of the state before it. When the
+ * worksheet changes, evaluation resumes at the first region whose content or order changed – like
+ * Mathcad, only what follows a change is recalculated. `run` is a generator that yields after every
+ * region, so a caller (the Web Worker) can interrupt it for a newer request without losing the
+ * work already done.
+ */
+export class ComputeSession {
+  private engine: WorksheetEngine | null = null;
+  private keys = '';
+  private sigs: string[] = [];
+  private ids: string[] = [];
+  private results: (RegionResult | undefined)[] = [];
+  private snaps: (EngineSnapshot | undefined)[] = [];
+  private globalResults: Record<string, RegionResult> = {};
+  private parseCache = new Map<string, MathStmt | ParseError>();
+
+  constructor(public opts: ComputeOptions = {}) {}
+
+  private parse = (r: MathRegion): MathStmt | ParseError => {
+    let p = this.parseCache.get(r.src);
+    if (!p) {
+      try { p = parseMathRegion(r.src); } catch (e) {
+        p = e instanceof ParseError ? e : new ParseError(String((e as Error).message ?? e), 0);
+      }
+      if (this.parseCache.size > 20000) this.parseCache.clear();
+      this.parseCache.set(r.src, p);
+    }
+    return p;
+  };
+
+  *run(ws: Worksheet): Generator<Progress, ComputeResult> {
+    const t0 = Date.now();
+    const order = sortRegions(ws.regions);
+    const sigs = order.map(signature);
+    const ids = order.map(r => r.id);
+    const globals = order.filter(r => r.type === 'math' && !r.disabled && r.src.includes('≡')).map(signature).join('\n');
+    const keys = JSON.stringify(ws.settings) + '\u0000' + globals;
+
+    // first region that differs from the previous run
+    let k = 0;
+    if (this.engine && keys === this.keys) {
+      const n = Math.min(this.sigs.length, sigs.length);
+      while (k < n && this.sigs[k] === sigs[k] && this.ids[k] === ids[k]) k++;
+    }
+    let start = k;
+    while (start > 0 && !this.snaps[start]) start--;
+    if (!this.engine || keys !== this.keys || !this.snaps[start]) {
+      // full recalculation
+      this.engine = new WorksheetEngine(ws, this.opts);
+      this.keys = keys;
+      this.globalResults = {};
+      this.engine.runGlobals(order, this.parse, this.globalResults);
+      start = 0;
+      this.snaps = [this.engine.snapshot()];
+    } else {
+      this.engine.ws = ws;
+      this.engine.restore(this.snaps[start]!);
+    }
+    // keep the valid prefix only
+    this.sigs.length = start; this.ids.length = start; this.results.length = start; this.snaps.length = start + 1;
+
+    const eng = this.engine;
+    const stride = order.length <= 400 ? 1 : Math.ceil(order.length / 400);
+    for (let i = start; i < order.length; i++) {
+      if (i > start && i % stride === 0) this.snaps[i] = eng.snapshot();
+      this.results[i] = eng.step(order[i], this.parse, this.globalResults);
+      this.sigs[i] = sigs[i];
+      this.ids[i] = ids[i];
+      yield { done: i + 1, total: order.length, resumedAt: start };
+    }
+    const results: Record<string, RegionResult> = {};
+    for (let i = 0; i < order.length; i++) if (this.results[i]) results[order[i].id] = this.results[i]!;
+    for (const [id, r] of Object.entries(this.globalResults)) results[id] = r;
+    return eng.finish(results, t0);
+  }
+
+  runToEnd(ws: Worksheet): ComputeResult {
+    const it = this.run(ws);
+    for (;;) {
+      const s = it.next();
+      if (s.done) return s.value;
+    }
+  }
+}
+
 export function computeWorksheet(ws: Worksheet, opts: ComputeOptions = {}): ComputeResult {
-  return new WorksheetEngine(ws, opts).compute();
+  return new ComputeSession(opts).runToEnd(ws);
 }
 
 export { formatReal };

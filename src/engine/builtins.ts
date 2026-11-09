@@ -7,6 +7,7 @@ import {
   toInt, toNumber, rangeValues, type FnVal, type Val,
 } from './values';
 import { cross3 as crossFn } from './evaluator';
+import { mkQ, qSum, withValue } from './quantity';
 import { brent, pnormStd, qnormStd, rootFromGuess, solveSystem } from './numeric';
 import { DISTRIBUTIONS, distFunction, distRandom, percentile, setStatsSeed } from './stats';
 
@@ -23,7 +24,11 @@ const nargs = (name: string, args: Val[], min: number, max = min) => {
 function elements(args: Val[]): Val[] {
   const out: Val[] = [];
   for (const a of args) {
-    if (isMatrix(a)) out.push(...((a as Matrix).toArray().flat(3) as Val[]));
+    if (isMatrix(a)) {
+      // read the internal data directly (toArray() deep-clones every element)
+      const data = (a as Matrix).valueOf() as unknown as Val[][];
+      for (const row of data) { if (Array.isArray(row)) for (const x of row) out.push(x); else out.push(row as Val); }
+    }
     else if (isRange(a)) out.push(...rangeValues(a));
     else out.push(a);
   }
@@ -97,6 +102,7 @@ function rand() {
   return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 }
 export function resetRandom(s = 1) { seed = s; }
+export function getRandomState(): number { return seed; }
 function randn() {
   let u = 0, v = 0;
   while (u === 0) u = rand();
@@ -182,7 +188,7 @@ export const BUILTINS: Record<string, Builtin> = {
   // statistics / aggregation
   max: (args) => { const e = elements(args); if (!e.length) throw new CalcError('max: keine Werte'); return zeroLike(e.reduce((a, b) => (compareVals(b, a) > 0 ? b : a)), e); },
   min: (args) => { const e = elements(args); if (!e.length) throw new CalcError('min: keine Werte'); return zeroLike(e.reduce((a, b) => (compareVals(b, a) < 0 ? b : a)), e); },
-  mean: (args) => { const e = elements(args); if (e.every(x => typeof x === 'number')) return (e as number[]).reduce((a, b) => a + b, 0) / e.length; return math.divide(e.reduce((a, b) => math.add(a as number, b as number) as Val) as number, e.length) as Val; },
+  mean: (args) => { const e = elements(args); if (e.every(x => typeof x === 'number')) return (e as number[]).reduce((a, b) => a + b, 0) / e.length; { const s = qSum(e); if (s !== undefined) return divQ(s, e.length); } return math.divide(e.reduce((a, b) => math.add(a as number, b as number) as Val) as number, e.length) as Val; },
   median: (args) => { const e = elements(args).slice().sort(compareVals); const n = e.length; return n % 2 ? e[(n - 1) / 2] : math.divide(math.add(e[n / 2 - 1] as number, e[n / 2] as number), 2) as Val; },
   stdev: (args) => stdev(elements(args), false),
   Stdev: (args) => stdev(elements(args), true),
@@ -190,7 +196,7 @@ export const BUILTINS: Record<string, Builtin> = {
   Var: (args) => variance(elements(args), true),
   gmean: (args) => { const e = elements(args).map(x => toNumber(x)); return Math.exp(e.reduce((a, b) => a + Math.log(b), 0) / e.length); },
   hmean: (args) => { const e = elements(args).map(x => toNumber(x)); return e.length / e.reduce((a, b) => a + 1 / b, 0); },
-  sum: (args) => { const e = elements(args); if (e.every(x => typeof x === 'number')) return (e as number[]).reduce((a, b) => a + b, 0); return e.reduce((a, b) => math.add(a as number, b as number) as Val, 0 as Val) },
+  sum: (args) => { const e = elements(args); if (e.every(x => typeof x === 'number')) return (e as number[]).reduce((a, b) => a + b, 0); { const s = qSum(e); if (s !== undefined) return s as Val; } return e.reduce((a, b) => math.add(a as number, b as number) as Val, 0 as Val) },
 
   // vectors & matrices
   length: (args) => { nargs('length', args, 1); const a = args[0]; if (typeof a === 'string') return a.length; const s = asMatrix(a).size(); return s[0] * s[1] === 0 ? 0 : (s[1] === 1 ? s[0] : s[0] === 1 ? s[1] : s[0]); },
@@ -375,8 +381,8 @@ export const BUILTINS: Record<string, Builtin> = {
   error: (args) => { throw new CalcError(String(args[0] ?? 'Fehler')); },
 
   // units
-  UnitsOf: (args) => { nargs('UnitsOf', args, 1); const a = args[0]; if (!isUnit(a)) return 1; const u = (a as Unit).clone(); (u as unknown as { value: number }).value = 1; return u; },
-  SIUnitsOf: (args) => { nargs('SIUnitsOf', args, 1); const a = args[0]; if (!isUnit(a)) return 1; const u = (a as Unit).clone(); (u as unknown as { value: number }).value = 1; return u; },
+  UnitsOf: (args) => { nargs('UnitsOf', args, 1); const a = args[0]; if (!isUnit(a)) return 1; return withValue(a as Unit, 1); },
+  SIUnitsOf: (args) => { nargs('SIUnitsOf', args, 1); const a = args[0]; if (!isUnit(a)) return 1; return withValue(a as Unit, 1); },
   IsString: (args) => (typeof args[0] === 'string' ? 1 : 0),
   IsScalar: (args) => (!isMatrix(args[0]) && typeof args[0] !== 'string' ? 1 : 0),
   IsArray: (args) => (isMatrix(args[0]) ? 1 : 0),
@@ -414,8 +420,12 @@ function zeroLike(v: Val, all: Val[]): Val {
   if (v !== 0) return v;
   const u = all.find(x => isUnit(x)) as Unit | undefined;
   if (!u) return v;
-  const z = u.clone(); (z as unknown as { value: number }).value = 0;
-  return z;
+  return withValue(u, 0);
+}
+
+function divQ(s: unknown, n: number): Val {
+  if (typeof s === 'number') return s / n;
+  return withValue(s as Unit, ((s as unknown as { value: number }).value) / n);
 }
 
 function sortEig(v: Val[]): Val[] {
@@ -462,7 +472,7 @@ function hyper(m: number, a: number, b: number, n: number): number {
 }
 function lgammaN(x: number): number { return Math.log(Math.abs(math.gamma(x) as number)); }
 function siOrNum(v: Val): number { return isUnit(v) ? (v as Unit).value as number : toNumber(v); }
-function scaleLike(tmpl: Val, x: number): Val { if (isUnit(tmpl)) { const u = (tmpl as Unit).clone(); (u as unknown as { value: number }).value = x; return u; } return x; }
+function scaleLike(tmpl: Val, x: number): Val { return isUnit(tmpl) ? withValue(tmpl as Unit, x) : x; }
 function regress(args: Val[], what: 'slope' | 'intercept'): number {
   const a = elements([args[0]]).map(x => toNumber(x)), b = elements([args[1]]).map(x => toNumber(x));
   const n = a.length; const ma = a.reduce((x, y) => x + y, 0) / n, mb = b.reduce((x, y) => x + y, 0) / n;
@@ -519,6 +529,14 @@ function variance(e: Val[], sample: boolean): Val {
     const m = xs.reduce((a, b) => a + b, 0) / n;
     return xs.reduce((a, b) => a + (b - m) ** 2, 0) / (sample ? n - 1 : n);
   }
+  if (e.every(x => isUnit(x) && typeof (x as unknown as { value: unknown }).value === 'number')) {
+    const xs = e.map(x => (x as unknown as { value: number }).value);
+    const d = (e[0] as unknown as { dimensions: number[] }).dimensions;
+    if (e.every(x => (x as unknown as { dimensions: number[] }).dimensions.every((v, i) => v === d[i]))) {
+      const m = xs.reduce((a, b) => a + b, 0) / n;
+      return mkQ(xs.reduce((a, b) => a + (b - m) ** 2, 0) / (sample ? n - 1 : n), d.map(v => 2 * v));
+    }
+  }
   const mean = math.divide(e.reduce((a, b) => math.add(a as number, b as number) as Val) as number, n) as Val;
   let s: Val | undefined;
   for (const x of e) {
@@ -566,7 +584,7 @@ export const LAZY_BUILTINS: Record<string, Lazy> = {
 };
 
 function withUnit(t: number, tmpl: Val): Val {
-  if (isUnit(tmpl)) { const u = (tmpl as Unit).clone(); (u as unknown as { value: number }).value = t; return u; }
+  if (isUnit(tmpl)) return withValue(tmpl as Unit, t);
   return t;
 }
 

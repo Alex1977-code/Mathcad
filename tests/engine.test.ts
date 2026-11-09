@@ -315,3 +315,11 @@ describe('example worksheet', () => {
     expect(texts).toContain('"erfüllt ✓"');
   });
 });
+
+describe('matrix ownership', () => {
+  it('assigning elements never modifies another variable', () => {
+    expect(last(['B := [1; 2]', 'f(n) :=\n  A ← B\n  A[1] ← 9\n  A[3] ← 7\n  A', 'f(0) =', 'B ='])).toBe('[1; 2]');
+    expect(last(['B := [1; 2]', 'g(n) :=\n  A ← B\n  A[1] ← 9\n  A', 'g(0) ='])).toBe('[1; 9]');
+    expect(last(['i := 0..4', 'v[i] := i', 'w := v', 'w[2] := 99', 'v ='])).toBe('[0; 1; 2; 3; 4]');
+  });
+});

@@ -1,6 +1,7 @@
 import type { Complex, Matrix, Unit } from 'mathjs';
 import type { Node } from './ast';
 import { math } from './units';
+import { isUnitFast, withValue } from './quantity';
 
 export interface FnVal {
   kind: 'fn';
@@ -59,7 +60,7 @@ export class Scope {
 export const isFn = (v: unknown): v is FnVal => typeof v === 'object' && v !== null && (v as FnVal).kind === 'fn';
 export const isRange = (v: unknown): v is RangeVal => typeof v === 'object' && v !== null && (v as RangeVal).kind === 'range';
 export const isMatrix = (v: unknown): v is Matrix => math.isMatrix(v);
-export const isUnit = (v: unknown): v is Unit => math.isUnit(v);
+export const isUnit = (v: unknown): v is Unit => isUnitFast(v);
 export const isComplex = (v: unknown): v is Complex => math.isComplex(v);
 
 export function rangeValues(r: RangeVal): (number | Unit)[] {
@@ -73,7 +74,7 @@ export function rangeValues(r: RangeVal): (number | Unit)[] {
   const tmpl = isUnit(r.start) ? (r.start as Unit) : isUnit(r.end) ? (r.end as Unit) : null;
   for (let i = 0; i <= n; i++) {
     const v = start + i * step;
-    if (tmpl) { const u = tmpl.clone(); (u as unknown as { value: number }).value = v; out.push(u); }
+    if (tmpl) out.push(withValue(tmpl, v));
     else out.push(v);
   }
   return out;
@@ -126,13 +127,20 @@ export function matrixRows(m: Matrix): Val[][] {
   return arr as Val[][];
 }
 
+const DenseMatrix = (math as unknown as { DenseMatrix: new (d: unknown) => Matrix }).DenseMatrix;
+
+/** Build a matrix from rectangular rows (without mathjs' element-wise validation). */
 export function makeMatrix(rows: Val[][]): Matrix {
-  if (rows.some(r => r.some(x => isMatrix(x)))) {
-    // nested arrays (Mathcad allows matrices as elements)
-    const M = (math as unknown as { DenseMatrix: new (d: unknown) => Matrix }).DenseMatrix;
-    return new M({ data: rows.map(r => r.slice()), size: [rows.length, rows[0]?.length ?? 0] });
-  }
-  return math.matrix(rows as unknown as number[][]);
+  const c = rows[0]?.length ?? 0;
+  for (const r of rows) if (r.length !== c) throw new CalcError('Alle Matrixzeilen müssen gleich lang sein');
+  return new DenseMatrix({ data: rows, size: [rows.length, c] });
+}
+
+/** Rows of a matrix without copying (do not modify!). */
+export function rowsOf(m: Matrix): Val[][] {
+  const d = m.valueOf() as unknown as Val[][];
+  if (d.length && !Array.isArray(d[0])) return (d as unknown as Val[]).map(x => [x]);
+  return d;
 }
 
 export function describeType(v: Val): string {

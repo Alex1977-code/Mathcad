@@ -96,6 +96,7 @@ const lchoose = (n: number, k: number) => lgamma(n + 1) - lgamma(k + 1) - lgamma
 
 let seed = 1;
 export function setStatsSeed(s: number) { seed = s; }
+export function getStatsSeed(): number { return seed; }
 export function urand(): number {
   seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
   let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
