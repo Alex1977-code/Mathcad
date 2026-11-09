@@ -55,7 +55,13 @@ export interface ComputeResult {
   millis: number;
 }
 
-export interface ComputeOptions { keepValues?: boolean; maxStepsPerRegion?: number }
+export interface ComputeOptions {
+  keepValues?: boolean;
+  /** Evaluation steps allowed per region before „Berechnung abgebrochen“. */
+  maxStepsPerRegion?: number;
+  /** Elements of matrices the resume snapshots may keep alive (memory limit of the incremental mode). */
+  snapshotBudget?: number;
+}
 
 /* -------------------------------------------------------------------------- */
 
@@ -113,6 +119,7 @@ export class WorksheetEngine {
 
   constructor(public ws: Worksheet, public opts: ComputeOptions = {}) {
     this.ev = new Evaluator({ origin: ws.settings.origin ?? 0 });
+    if (opts.maxStepsPerRegion) this.ev.maxSteps = opts.maxStepsPerRegion;
     this.fmt = { decimals: ws.settings.decimals ?? 3, expThreshold: ws.settings.expThreshold ?? 7, maxMatrix: 12, decimalComma: !!ws.settings.decimalComma };
   }
 
@@ -628,6 +635,51 @@ export class ComputeSession {
   private ids: string[] = [];
   private results: (RegionResult | undefined)[] = [];
   private snaps: (EngineSnapshot | undefined)[] = [];
+  /** Generation of the running calculation: an older generator must not continue. */
+  private gen = 0;
+  /** Matrix elements kept alive by the snapshots (approximate). */
+  private snapWeight = 0;
+  private counted = new WeakSet<object>();
+
+  /** Matrix elements kept alive by a set of snapshots (each matrix counted once). */
+  private static weigh(snaps: (EngineSnapshot | undefined)[]): number {
+    const seen = new WeakSet<object>();
+    let w = 0;
+    for (const sn of snaps) {
+      if (!sn) continue;
+      for (const v of sn.vars.values()) {
+        if (isMatrix(v) && !seen.has(v as object)) { seen.add(v as object); w += (v as Matrix).size().reduce((a, b) => a * b, 1); }
+      }
+    }
+    return w;
+  }
+
+  /**
+   * Snapshot before region i. If the snapshots would keep too much memory alive, older ones are thinned
+   * out (every second one) – recent snapshots matter most, because edits are usually further down.
+   */
+  private takeSnapshot(eng: WorksheetEngine, i: number) {
+    const budget = this.opts.snapshotBudget ?? 4e6;
+    const sn = eng.snapshot();
+    this.snaps[i] = sn;
+    // cheap check first: only matrices that are new since the last check count
+    let add = 0;
+    for (const v of sn.vars.values()) {
+      if (isMatrix(v) && !this.counted.has(v as object)) { this.counted.add(v as object); add += (v as Matrix).size().reduce((a, b) => a * b, 1); }
+    }
+    this.snapWeight += add;
+    if (this.snapWeight <= budget) return;
+    for (let round = 0; round < 12 && this.snapWeight > budget; round++) {
+      const idx = this.snaps.map((x, k) => (x && k > 0 && k < i ? k : -1)).filter(k => k > 0);
+      if (!idx.length) break;
+      idx.forEach((k, n) => { if (n % 2 === 0) this.snaps[k] = undefined; });
+      this.snapWeight = ComputeSession.weigh(this.snaps);
+    }
+    if (this.snapWeight > budget) { this.snaps[i] = undefined; this.snapWeight = ComputeSession.weigh(this.snaps); }
+    this.counted = new WeakSet();
+    for (const x of this.snaps) if (x) for (const v of x.vars.values()) if (isMatrix(v)) this.counted.add(v as object);
+  }
+
   private globalResults: Record<string, RegionResult> = {};
   private parseCache = new Map<string, MathStmt | ParseError>();
 
@@ -673,6 +725,8 @@ export class ComputeSession {
       this.globalResults = {};
       this.engine.runGlobals(order, this.parse, this.globalResults);
       start = 0;
+      this.snapWeight = 0;
+      this.counted = new WeakSet();
       this.snaps = [this.engine.snapshot()];
     } else {
       this.engine.ws = ws;
@@ -682,13 +736,16 @@ export class ComputeSession {
     this.sigs.length = start; this.ids.length = start; this.results.length = start; this.snaps.length = start + 1;
 
     const eng = this.engine;
+    const gen = ++this.gen;
     const stride = order.length <= 400 ? 1 : Math.ceil(order.length / 400);
     for (let i = start; i < order.length; i++) {
-      if (i > start && i % stride === 0) this.snaps[i] = eng.snapshot();
+      if (this.opts.snapshotBudget !== 0 && i > start && i % stride === 0) this.takeSnapshot(eng, i);
       this.results[i] = eng.step(order[i], this.parse, this.globalResults);
       this.sigs[i] = sigs[i];
       this.ids[i] = ids[i];
       yield { done: i + 1, total: order.length, resumedAt: start };
+      // a newer run has started in the meantime: this one is obsolete and must not change the session
+      if (gen !== this.gen) throw new Error('Veraltete Berechnung');
     }
     const results: Record<string, RegionResult> = {};
     for (let i = 0; i < order.length; i++) if (this.results[i]) results[order[i].id] = this.results[i]!;
@@ -706,7 +763,8 @@ export class ComputeSession {
 }
 
 export function computeWorksheet(ws: Worksheet, opts: ComputeOptions = {}): ComputeResult {
-  return new ComputeSession(opts).runToEnd(ws);
+  // a single full calculation needs no resume snapshots
+  return new ComputeSession({ snapshotBudget: 0, ...opts }).runToEnd(ws);
 }
 
 export { formatReal };

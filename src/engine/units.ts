@@ -80,11 +80,13 @@ const cache = new Map<string, Unit | number | null>();
  * Resolve a unit name to a mathjs Unit (value 1) or a plain number for
  * dimensionless angle units. Returns null if not a unit.
  */
-export function lookupUnit(name: string): Unit | number | null {
-  if (cache.has(name)) return cache.get(name)!;
+export function lookupUnit(name: string, force = false): Unit | number | null {
+  const key = force ? '\u0000' + name : name;
+  if (cache.has(key)) return cache.get(key)!;
   let res: Unit | number | null = null;
   if (name in SCALAR_UNITS) res = SCALAR_UNITS[name];
-  else if (!NOT_UNITS.has(name)) {
+  // force: explicitly marked as unit ('mil), also names usually taken as variables
+  else if (force || !NOT_UNITS.has(name)) {
     const mj = ALIASES[name] ?? name.replace(/^[μµ]/, 'u');
     if (/^[A-Za-z_]+[0-9]*$/.test(mj)) {
       try {
@@ -92,7 +94,7 @@ export function lookupUnit(name: string): Unit | number | null {
       } catch { res = null; }
     }
   }
-  cache.set(name, res);
+  cache.set(key, res);
   return res;
 }
 

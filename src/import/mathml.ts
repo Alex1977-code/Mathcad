@@ -4,6 +4,7 @@
  * FormelWerk AST.
  */
 import type { Node, Stmt, MathStmt, DefTarget, BinOp } from '../engine/ast';
+import { lookupUnit } from '../engine/units';
 
 export interface ConvertCtx {
   warnings: string[];
@@ -20,6 +21,9 @@ export const child = (e: Element, name: string) => kids(e).find(c => c.localName
 class ConvertError extends Error {}
 
 /* ---------------------------------- names ---------------------------------- */
+
+/** Prime units whose name is also a physical constant in the 'name syntax. */
+const UNIT_CONFLICTS: Record<string, string> = { __proto__: null as never, h: 'hr', R: 'Rankine' };
 
 const NAME_FIX: Record<string, string> = { __proto__: null as never, find: 'Find', given: 'Given', minerr: 'Minerr' };
 
@@ -60,7 +64,24 @@ export function idName(e: Element): string {
     const s = cleanPart(sub.trim(), true);
     if (s) name = name.includes('_') ? `${name}.${s}` : `${name}_${s}`;
   }
-  return NAME_FIX[name] ?? name;
+  name = NAME_FIX[name] ?? name;
+  return uniqueName(name, `${base}\u0000${sub}`);
+}
+
+/**
+ * Different Mathcad names can map to the same FormelWerk name (a-b, a.b, a_b → a_b). Within one import
+ * each original name keeps its own name: later ones get a number appended (a_b2).
+ */
+const names = { byOriginal: new Map<string, string>(), owner: new Map<string, string>() };
+export function resetNameRegistry() { names.byOriginal.clear(); names.owner.clear(); }
+function uniqueName(name: string, original: string): string {
+  const known = names.byOriginal.get(original);
+  if (known) return known;
+  let n = name;
+  for (let k = 2; names.owner.has(n) && names.owner.get(n) !== original; k++) n = `${name}${k}`;
+  names.byOriginal.set(original, n);
+  names.owner.set(n, original);
+  return n;
 }
 
 /* -------------------------------- expressions ------------------------------- */
@@ -90,7 +111,13 @@ export function convertExpr(e: Element, ctx: ConvertCtx): Node {
     case 'id': {
       const name = idName(e);
       const labels = e.getAttribute('labels') ?? '';
-      if (labels === 'UNIT' && ctx.definedNames.has(name)) return { k: 'id', name: `'${name}` };
+      if (labels === 'UNIT') {
+        // names that are also physical constants ('h, 'R …) get an unambiguous unit name
+        const alt = UNIT_CONFLICTS[name];
+        if (alt) return { k: 'id', name: ctx.definedNames.has(alt) ? `'${alt}` : alt };
+        // units that are usually variable names (mil, cup, gr …) or defined in the sheet: explicit unit 'name
+        if (ctx.definedNames.has(name) || lookupUnit(name) === null) return { k: 'id', name: `'${name}` };
+      }
       if (labels === 'CONSTANT' && !['π', 'e', '∞', 'g'].includes(name)) return { k: 'id', name: `'${name}` };
       if (labels === 'CONSTANT' && ctx.definedNames.has(name)) return name === 'e' ? { k: 'call', name: 'exp', args: [{ k: 'num', v: 1 }] } : { k: 'id', name: `'${name}` };
       return { k: 'id', name };

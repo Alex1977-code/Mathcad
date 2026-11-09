@@ -9,7 +9,7 @@ export type { ExpScalar, Expected };
 const ZERO = () => [0, 0, 0, 0, 0, 0, 0, 0, 0];
 
 function unitDims(name: string): number[] | null {
-  const u = lookupUnit(name);
+  const u = lookupUnit(name, true);
   if (u === null) return null;
   if (typeof u === 'number') return ZERO();
   return (u as Unit).dimensions.slice();
@@ -56,6 +56,13 @@ export function parseExpected(e: Element | undefined | null): Expected | null {
   let v: Element | undefined = e;
   if (local(e) === 'result') v = kids(e)[0];
   if (!v) return null;
+  // a matrix with one unit for all elements: <unitedValue><matrix/><unitMonomial/></unitedValue>
+  if (local(v) === 'unitedValue' && child(v, 'matrix')) {
+    const m = parseExpected(child(v, 'matrix')!);
+    const dims = parseMonomial(child(v, 'unitMonomial'));
+    if (!m || m.kind !== 'matrix') return m;
+    return { ...m, v: m.v.map(x => (x && dims && x.dims.every(d => d === 0) ? { ...x, dims } : dims ? x : null)) };
+  }
   if (local(v) === 'str') return { kind: 'string', v: v.textContent ?? '' };
   if (local(v) === 'matrix') {
     const rows = parseInt(v.getAttribute('rows') ?? '0', 10);

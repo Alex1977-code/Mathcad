@@ -1,12 +1,13 @@
 /** Import of Mathcad 11–15 worksheets (.xmcd, XML). */
 import { emptyWorksheet, newId, type Region, type Worksheet } from '../engine/model';
-import { collectDefinedNames, kids, local, child, type ConvertCtx } from './mathml';
-import { alignStyle, base64ToBytes, bytesToBase64, coord, defaultXmlParser, escapeHtml, gunzip, imageMime, mathRegionFrom, type XmlParser } from './common';
+import { collectDefinedNames, convertMathElement, kids, local, child, resetNameRegistry, type ConvertCtx } from './mathml';
+import { stmtToText } from '../engine/serialize';
+import { alignStyle, base64ToBytes, bytesToBase64, coord, defaultXmlParser, pushMath, escapeHtml, gunzip, imageMime, mathRegionFrom, type XmlParser } from './common';
 
 /** Mathcad 11–15 coordinates are in points (1/72 in); we use CSS pixels (1/96 in). */
 const SCALE = 96 / 72;
 
-function textToHtml(textEl: Element): string {
+function textToHtml(textEl: Element, ctx?: ConvertCtx): string {
   const conv = (n: ChildNode): string => {
     if (n.nodeType === 3) return escapeHtml(n.textContent ?? '');
     if (n.nodeType !== 1) return '';
@@ -34,11 +35,43 @@ function textToHtml(textEl: Element): string {
         const style = color && /^#?[0-9a-f]{6}$/i.test(color) ? ` style="color:${color.startsWith('#') ? color : '#' + color}"` : '';
         return style ? `<span${style}>${inner()}</span>` : inner();
       }
-      case 'math': case 'inlineAttr': case 'blockAttr': return '';
+      case 'a': case 'hyperlink': case 'link': {
+        // only web links (the sanitizer removes everything else as well)
+        const href = e.getAttribute('href') ?? e.getAttribute('url') ?? e.getAttribute('target') ?? '';
+        return /^https?:\/\//i.test(href) ? `<a href="${escapeHtml(href)}">${inner()}</a>` : inner();
+      }
+      case 'math': {
+        // formula inside a text: shown as its text form (not calculated)
+        if (!ctx) return '';
+        try {
+          const t = stmtToText(convertMathElement(e, ctx).stmt).trim();
+          if (t) { ctx.warnings.push(`Formel im Text „${t.slice(0, 40)}“ als Text übernommen (wird nicht berechnet)`); return `<code>${escapeHtml(t)}</code>`; }
+        } catch { /* ignore */ }
+        return '';
+      }
+      case 'inlineAttr': case 'blockAttr': return '';
       default: return inner();
     }
   };
-  return Array.from(textEl.childNodes).map(conv).join('').trim();
+  // paragraphs with a list style become lists
+  const parts: string[] = [];
+  let list: { tag: string; items: string[] } | null = null;
+  const flush = () => { if (list) parts.push(`<${list.tag}>${list.items.join('')}</${list.tag}>`); list = null; };
+  for (const n of Array.from(textEl.childNodes)) {
+    const e = n.nodeType === 1 ? (n as Element) : null;
+    const ls = e && e.localName === 'p' ? (e.getAttribute('list-style-type') ?? 'inherit') : 'inherit';
+    if (e && !['inherit', 'none', ''].includes(ls)) {
+      const tag = /decimal|alpha|roman|number/i.test(ls) ? 'ol' : 'ul';
+      if (!list || list.tag !== tag) { flush(); list = { tag, items: [] }; }
+      list.items.push(`<li>${Array.from(e.childNodes).map(conv).join('')}</li>`);
+      continue;
+    }
+    if (n.nodeType === 3 && !(n.textContent ?? '').trim() && list) continue;
+    flush();
+    parts.push(conv(n));
+  }
+  flush();
+  return parts.join('').trim();
 }
 
 export async function importXmcd(xml: string, name: string, parseXml: XmlParser = defaultXmlParser): Promise<Worksheet> {
@@ -48,6 +81,7 @@ export async function importXmcd(xml: string, name: string, parseXml: XmlParser 
   const ws = emptyWorksheet(name.replace(/\.xmcd$/i, ''));
   ws.settings.fontSize = 12;
   const warnings: string[] = [];
+  resetNameRegistry();
   const ctx: ConvertCtx = { warnings, definedNames: collectDefinedNames(root), unknown: new Set() };
 
   // settings
@@ -91,11 +125,11 @@ export async function importXmcd(xml: string, name: string, parseXml: XmlParser 
         const m = mathRegionFrom(content, x, y, ctx);
         const ay = parseFloat(reg.getAttribute('align-y') ?? '');
         if (Number.isFinite(ay) && Math.abs(ay) < 1e6) m.oy = ay * SCALE - y;
-        regions.push(m);
+        pushMath(regions, m);
         break;
       }
       case 'text': {
-        const html = textToHtml(content);
+        const html = textToHtml(content, ctx);
         if (html) regions.push({ id: newId(), type: 'text', x, y, w: Math.max(w, 60), html });
         break;
       }

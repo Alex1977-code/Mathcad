@@ -1,7 +1,7 @@
 import type { MathStmt, Node } from '../engine/ast';
 import { stmtToText, toText } from '../engine/serialize';
 import { parseMathRegion } from '../engine/parser';
-import { newId, type MathRegion } from '../engine/model';
+import { newId, type MathRegion, type Region } from '../engine/model';
 import { convertMathElement, findResultElement, type ConvertCtx } from './mathml';
 import { parseExpected, type Expected } from './results';
 
@@ -18,7 +18,19 @@ export function defaultXmlParser(xml: string): Document {
   return doc;
 }
 
-export interface ImportedMath extends MathRegion { imported: { expected?: Expected; symbolic?: string; original?: string } }
+export interface ImportedMath extends MathRegion {
+  imported: { expected?: Expected; symbolic?: string; original?: string };
+  /** Extra region that shows the value of a program definition „x := program =“ (pushed by the caller). */
+  companion?: ImportedMath;
+}
+
+/** Add an imported formula and its companion region (if any). */
+export function pushMath(regions: Region[], m: ImportedMath) {
+  const c = m.companion;
+  delete m.companion;
+  regions.push(m);
+  if (c) { c.oy = m.oy; regions.push(c); }
+}
 
 /** Build a math region from a Mathcad <math> element; never throws. */
 export function mathRegionFrom(
@@ -49,6 +61,16 @@ export function mathRegionFrom(
   }
   const expected = parseExpected(expectedEl ?? resultEl ?? null) ?? undefined;
   const disabled = mathEl.getAttribute('disable-calc') === 'true' || undefined;
+  // „x := program =“: FormelWerk shows the value of a program in a separate evaluation next to it
+  if (stmt && stmt.kind === 'define' && stmt.expr.k === 'program' && stmt.show) {
+    const t = stmt.target;
+    const what: Node = t.multi ? { k: 'matrix', rows: t.multi.map(n => [n]) } : { k: 'id', name: t.name };
+    const ev: MathStmt = { kind: 'eval', expr: what, unit: stmt.show.unit };
+    return {
+      id: newId(), type: 'math', x, y, src, disabled, imported: { symbolic: symbolic ? toText(symbolic) : undefined },
+      companion: { id: newId(), type: 'math', x: x + 260, y, src: stmtToText(ev), disabled, imported: { expected } },
+    };
+  }
   return {
     id: newId(), type: 'math', x, y, src, disabled,
     imported: { expected, symbolic: symbolic ? toText(symbolic) : undefined },

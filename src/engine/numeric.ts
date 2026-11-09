@@ -79,11 +79,40 @@ export function integrate(f: (x: number) => number, a: number, b: number, tol = 
     if (err <= tol * Math.max(Math.abs(total), abs * 1e-3) || err < 1e-300) return total;
     const s = segs[worst];
     const m = (s.a + s.b) / 2;
-    if (m <= s.a || m >= s.b) return total;
+    if (m <= s.a || m >= s.b) return total + endCorrection(segs);
     const l = gk15(guard, s.a, m), r = gk15(guard, m, s.b);
     segs.splice(worst, 1, { a: s.a, b: m, v: l[0], e: l[1], abs: l[2] }, { a: m, b: s.b, v: r[0], e: r[1], abs: r[2] });
   }
-  return segs.reduce((t, s) => t + s.v, 0);
+  return segs.reduce((t, s) => t + s.v, 0) + endCorrection(segs);
+
+  /**
+   * Not converged: usually an integrable singularity at an end point (x^p with −1 < p < 0), whose tiny
+   * last segment GK cannot resolve. There the integrand follows a power law; its exact integral replaces
+   * the estimate of that segment.
+   */
+  function endCorrection(ss: Seg[]): number {
+    let corr = 0;
+    for (const atLo of [true, false]) {
+      const e = atLo ? lo : hi;
+      const seg = ss.reduce<Seg | null>((best, x) => ((atLo ? x.a === lo : x.b === hi) && (!best || x.e > best.e) ? x : best), null);
+      if (!seg || !isFinite(e)) continue;
+      const w = seg.b - seg.a;
+      try {
+        const d1 = w / 2, d2 = w / 8;
+        const f1 = g(atLo ? e + d1 : e - d1), f2 = g(atLo ? e + d2 : e - d2);
+        if (!(isFinite(f1) && isFinite(f2)) || f1 === 0 || f1 * f2 <= 0) continue;
+        const p = Math.log(f2 / f1) / Math.log(d2 / d1);
+        if (!(p > -1 && p < -0.05)) continue;
+        const C = f1 / Math.pow(d1, p);
+        const exact = C * Math.pow(w, p + 1) / (p + 1);
+        // only when the power law describes the segment well (three points agree)
+        const d3 = w / 32, f3 = g(atLo ? e + d3 : e - d3);
+        if (!(Math.abs(C * Math.pow(d3, p) - f3) <= 1e-3 * Math.abs(f3))) continue;
+        corr += exact - seg.v;
+      } catch { /* keep the estimate */ }
+    }
+    return corr;
+  }
 }
 
 /** Central difference of order n with step h (error O(h²)). */

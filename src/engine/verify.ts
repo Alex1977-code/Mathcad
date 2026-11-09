@@ -41,8 +41,8 @@ function scalarMatch(v: Val, e: ExpScalar, scale: number): boolean {
   if (!s) return false;
   // a dimensionless zero in Mathcad may come back without units
   if (!IGNORE_DIMS && !sameDims(s.dims, e.dims) && !(s.re === 0 && e.re === 0)) return false;
-  // with a display unit our value is the ratio value/unit, which must be dimensionless
-  if (IGNORE_DIMS && !sameDims(s.dims, [0, 0, 0, 0, 0, 0, 0, 0, 0]) && s.re !== 0) return false;
+  // with a display unit our value is the ratio value/unit; Mathcad stores the unit left over (kN·m shown in kN → m)
+  if (IGNORE_DIMS && !sameDims(s.dims, e.dims) && !sameDims(s.dims, [0, 0, 0, 0, 0, 0, 0, 0, 0]) && s.re !== 0) return false;
   const sc = Math.max(scale, Math.abs(e.re), Math.abs(e.im ?? 0));
   return close(s.re, e.re, sc) && close(s.im, e.im ?? 0, sc);
 }

@@ -14,6 +14,7 @@ import { computeWorksheet } from '../src/engine/worksheet';
 import { sortRegions, type MathRegion } from '../src/engine/model';
 
 const FIX = join(__dirname, 'fixtures', 'mathcad');
+const si = (v: unknown) => (typeof v === 'number' ? v : (v as { value: number }).value);
 
 function writeReport(name: string, reports: FileReport[]) {
   const dir = join(__dirname, '..', 'test-results');
@@ -124,5 +125,37 @@ describe('Befunde der Testagenten: Import-Robustheit', () => {
     const u16 = new Uint8Array(2 + s.length * 2); u16[0] = 0xff; u16[1] = 0xfe;
     for (let i = 0; i < s.length; i++) { u16[2 + 2 * i] = s.charCodeAt(i) & 0xff; u16[3 + 2 * i] = s.charCodeAt(i) >> 8; }
     expect(srcs(await loadWorksheetFile('t.xmcd', u16))).toEqual(['ä := 2']);
+  });
+});
+
+describe('Offene Punkte: Import', () => {
+  const xmcd = (regions: string) => `<?xml version="1.0" encoding="UTF-8"?>
+<worksheet version="3.0.3" xmlns="http://schemas.mathsoft.com/worksheet30" xmlns:ml="http://schemas.mathsoft.com/math30"><regions>${regions}</regions></worksheet>`;
+  const region = (id: number, top: number, math: string) => `<region region-id="${id}" left="10" top="${top}" width="100" height="16"><math>${math}</math></region>`;
+  const load = (s: string) => loadWorksheetFile('t.xmcd', new TextEncoder().encode(s));
+  const maths = (ws: Awaited<ReturnType<typeof load>>) => sortRegions(ws.regions).filter(r => r.type === 'math') as MathRegion[];
+
+  it('Mathcad-Namen, die zusammenfallen würden, bleiben verschieden', async () => {
+    const def = (n: string, v: number, top: number) => region(top, top, `<ml:define><ml:id>${n}</ml:id><ml:real>${v}</ml:real></ml:define>`);
+    const ws = await load(xmcd(def('a-b', 1, 10) + def('a_b', 2, 40) + region(9, 80, '<ml:eval><ml:apply><ml:plus/><ml:id>a-b</ml:id><ml:id>a_b</ml:id></ml:apply></ml:eval>')));
+    const m = maths(ws);
+    expect(new Set([m[0].src.split(' ')[0], m[1].src.split(' ')[0]]).size).toBe(2);
+    expect(computeWorksheet(ws).results[m[2].id].resultText).toBe('3');
+  });
+  it('Einheiten mit labels="UNIT", die sonst Variablennamen sind', async () => {
+    const ws = await load(xmcd(region(1, 10, '<ml:eval><ml:apply><ml:mult/><ml:real>2</ml:real><ml:id labels="UNIT">mil</ml:id></ml:apply></ml:eval>')));
+    const m = maths(ws);
+    expect(m[0].src).toBe("2 'mil =");
+    expect(si(computeWorksheet(ws, { keepValues: true }).results[m[0].id].value!)).toBeCloseTo(5.08e-5, 10);
+  });
+  it('Texte: Listen, Links und Formeln im Text', async () => {
+    const txt = `<region region-id="1" left="0" top="10" width="200" height="40"><text>
+      <p list-style-type="disc">Eins</p><p list-style-type="disc">Zwei</p><p>Danach <a href="https://example.org">Link</a> und <math><ml:define><ml:id>q</ml:id><ml:real>2</ml:real></ml:define></math></p></text></region>`;
+    const ws = await load(xmcd(txt));
+    const t = ws.regions.find(r => r.type === 'text');
+    const html = t && t.type === 'text' ? t.html : '';
+    expect(html).toContain('<ul><li>Eins</li><li>Zwei</li></ul>');
+    expect(html).toContain('<a href="https://example.org">Link</a>');
+    expect(html).toContain('<code>q := 2</code>');
   });
 });

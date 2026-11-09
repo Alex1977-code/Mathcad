@@ -2,8 +2,8 @@
 import JSZip from 'jszip';
 import { emptyWorksheet, newId, type PlotTrace, type Region, type Worksheet } from '../engine/model';
 import { toText } from '../engine/serialize';
-import { collectDefinedNames, convertExpr, kids, local, child, type ConvertCtx } from './mathml';
-import { alignStyle, bytesToBase64, coord, defaultXmlParser, escapeHtml, imageMime, mathRegionFrom, type XmlParser } from './common';
+import { collectDefinedNames, convertExpr, kids, local, child, resetNameRegistry, type ConvertCtx } from './mathml';
+import { alignStyle, bytesToBase64, coord, defaultXmlParser, pushMath, escapeHtml, imageMime, mathRegionFrom, type XmlParser } from './common';
 
 const PALETTE = ['#2563eb', '#dc2626', '#16a34a', '#9333ea', '#ea580c', '#0891b2', '#db2777', '#4b5563'];
 
@@ -59,7 +59,12 @@ export function xamlToHtml(root: Element, baseSize = 14.6666): string {
         const tag = /decimal|alpha|roman/i.test(marker) ? 'ol' : 'ul';
         return `<${tag}>${inner()}</${tag}>`;
       }
-      case 'ListItem': return `<li>${inner().replace(/^<p>|<\/p>$/g, '')}</li>`;
+      case 'ListItem': {
+        // one paragraph per item: unwrap it (also with attributes), several stay as they are
+        const h = inner();
+        const single = /^<p[^>]*>((?:(?!<p[\s>]).)*)<\/p>$/s.exec(h);
+        return `<li>${single ? single[1] : h}</li>`;
+      }
       case 'Table': return `<table>${inner()}</table>`;
       case 'TableRowGroup': return inner();
       case 'TableRow': return `<tr>${inner()}</tr>`;
@@ -82,6 +87,7 @@ export async function importMcdx(data: ArrayBuffer | Uint8Array, name: string, p
   const ws = emptyWorksheet(name.replace(/\.mcdx$/i, ''));
   ws.settings.fontSize = 12.5;
   const warnings: string[] = [];
+  resetNameRegistry();
   const ctx: ConvertCtx = { warnings, definedNames: collectDefinedNames(root), unknown: new Set() };
 
   // settings
@@ -156,7 +162,7 @@ export async function importMcdx(data: ArrayBuffer | Uint8Array, name: string, p
     switch (local(content)) {
       case 'math': {
         const ref = content.getAttribute('resultRef');
-        regions.push(mathRegionFrom(content, x, y, ctx, ref ? results.get(ref) : null));
+        pushMath(regions, mathRegionFrom(content, x, y, ctx, ref ? results.get(ref) : null));
         break;
       }
       case 'text': {
@@ -195,7 +201,7 @@ export async function importMcdx(data: ArrayBuffer | Uint8Array, name: string, p
         for (const m of kids(content)) {
           if (local(m) !== 'math') continue;
           const ref = m.getAttribute('resultRef');
-          regions.push(mathRegionFrom(m, x + k * 130, y, ctx, ref ? results.get(ref) : null));
+          pushMath(regions, mathRegionFrom(m, x + k * 130, y, ctx, ref ? results.get(ref) : null));
           k++;
         }
         warnings.push(`Datentabelle mit ${k} Spalten als Vektordefinitionen übernommen`);

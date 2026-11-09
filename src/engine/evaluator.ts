@@ -18,6 +18,8 @@ export interface Constraint { node: Node }
 export class Evaluator {
   depth = 0;
   steps = 0;
+  /** Evaluation steps per region before the calculation is aborted. */
+  maxSteps = 3e8;
   /** Matrices created by indexed assignment that no other variable references (may be mutated in place). */
   owned = new WeakSet<object>();
   intDepth = 0;
@@ -35,7 +37,7 @@ export class Evaluator {
     if (name.startsWith("'")) {
       const pc = PHYS_CONSTANTS[name.slice(1)];
       if (pc) return pc();
-      const u = lookupUnit(name.slice(1));
+      const u = lookupUnit(name.slice(1), true);
       if (u === null) throw new CalcError(`Einheit „${name.slice(1)}“ ist unbekannt`, name);
       return u as Val;
     }
@@ -55,7 +57,7 @@ export class Evaluator {
   /* --------------------------- evaluate -------------------------- */
 
   eval(n: Node, scope: Scope, vec = false): Val {
-    if (++this.steps > 3e8) throw new CalcError('Berechnung abgebrochen (zu viele Schritte)');
+    if (++this.steps > this.maxSteps) throw new CalcError('Berechnung abgebrochen (zu viele Schritte)');
     switch (n.k) {
       case 'num': return n.v;
       case 'imag': return math.complex(0, n.v);
@@ -461,6 +463,18 @@ export class Evaluator {
         for (let k = m._size[0]; k < idx[0]; k++) m._data.push([0]);
         m._data.push([value]);
         m._size[0] = idx[0] + 1;
+        return m;
+      }
+    }
+    // same for a row vector: v[0, k] ← … or v[k] ← … with one row
+    if (mutate && base !== undefined && isMatrix(base) && !isMatrix(value)) {
+      const m = base as Matrix & { _data: Val[][]; _size: number[] };
+      const k = idx.length === 2 && idx[0] === 0 ? idx[1] : idx.length === 1 && m._size[0] === 1 && m._size[1] > 1 ? idx[0] : -1;
+      if (k >= m._size[1] && Array.isArray(m._data) && m._size.length === 2 && m._size[0] === 1 && Array.isArray(m._data[0])) {
+        const row = m._data[0];
+        while (row.length < k) row.push(0);
+        row.push(value);
+        m._size[1] = k + 1;
         return m;
       }
     }

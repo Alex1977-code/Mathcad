@@ -570,3 +570,22 @@ describe('Befunde der Testagenten: Stabilität, Import-Text, Sicherheit', () => 
     expect(() => normalizeWorksheet({ format: 'x', regions: [] })).toThrow();
   });
 });
+
+describe('Offene Punkte: Rechenkern', () => {
+  it('Integral mit starker Randsingularität', () => {
+    expect(si(lastVal(['int(x^(-0.99), x, 0, 1) =']))).toBeCloseTo(100, 6);
+    expect(si(lastVal(['int(x^(-0.9), x, 0, 1) =']))).toBeCloseTo(10, 8);
+  });
+  it('Zeilenvektor wachsen lassen', () => {
+    expect(last(['g(n) :=\n  v[0,0] ← 0\n  v[0,1] ← 1\n  for k ∈ 2..n\n    v[k] ← k\n  v', 'g(5) ='])).toBe('[0, 1, 2, 3, 4, 5]');
+    expect(last(['h(n) :=\n  v[0,0] ← 5\n  v[0,3] ← 1\n  v', 'h(1) ='])).toBe('[5, 0, 0, 1]');
+  });
+  it('Zwischenstände halten den Speicher in Grenzen und bleiben korrekt', async () => {
+    const { ComputeSession } = await import('../src/engine/worksheet');
+    const ws = sheet(['M := identity(200)', ...Array(60).fill('M := M + 1'), 'M[0, 0] =']);
+    const s = new ComputeSession({ snapshotBudget: 2e5 });
+    expect(s.runToEnd(ws).results[`r61`].resultText).toBe('61');
+    ws.regions[61] = { ...ws.regions[61], src: 'M[1, 0] =' } as never;
+    expect(s.runToEnd(ws).results[`r61`].resultText).toBe('60');
+  });
+});
