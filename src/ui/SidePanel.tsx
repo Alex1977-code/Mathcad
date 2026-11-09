@@ -105,7 +105,8 @@ function Variables({ result }: { result: ComputeResult | null }) {
 }
 
 function PlotEditor({ region, result }: { region: PlotRegion; result: ComputeResult | null }) {
-  const upd = (patch: Partial<PlotRegion>) => store.updateRegion(region.id, patch);
+  // no undo step per keystroke: the store records one step for the whole plot editing session
+  const upd = (patch: Partial<PlotRegion>) => store.updateRegion(region.id, patch, false);
   const setTrace = (i: number, patch: Partial<PlotTrace>) => upd({ traces: region.traces.map((t, k) => (k === i ? { ...t, ...patch } : t)) });
   const err = result?.results[region.id]?.plot?.error;
   return (

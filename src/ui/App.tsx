@@ -36,6 +36,7 @@ export function App() {
   const fileName = useStore(s => s.fileName);
   const zoom = useStore(s => s.zoom);
   const plotEditor = useStore(s => s.plotEditor);
+  const canUndo = useStore(s => s.canUndo), canRedo = useStore(s => s.canRedo), editing = useStore(s => !!s.editing);
   const sideOpen = useStore(s => s.sideOpen);
   const autoCalc = useStore(s => s.autoCalc);
   const recalcTick = useStore(s => s.recalcTick);
@@ -194,8 +195,8 @@ export function App() {
         <div className="brand" title="FormelWerk – technische Berechnungen"><span className="brand-mark">ƒ</span><span className="brand-name">FormelWerk</span></div>
         <div className="qa">
           <button className="btn icon ghost" title="Speichern (Strg+S)" onClick={() => save(false)}><IconSave /></button>
-          <button className="btn icon ghost" title="Rückgängig (Strg+Z)" onClick={() => store.undo()}><IconUndo /></button>
-          <button className="btn icon ghost" title="Wiederholen (Strg+Y)" onClick={() => store.redo()}><IconRedo /></button>
+          <button className="btn icon ghost" title="Rückgängig (Strg+Z)" onClick={() => store.undo()} disabled={!canUndo && !editing}><IconUndo /></button>
+          <button className="btn icon ghost" title="Wiederholen (Strg+Y)" onClick={() => store.redo()} disabled={!canRedo}><IconRedo /></button>
         </div>
         <div className="doc-title">
           <input className="title-input" value={ws.title} aria-label="Titel des Arbeitsblatts" spellCheck={false}

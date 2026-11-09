@@ -8,12 +8,15 @@ interface Props { region: TextRegion; editing: boolean; onCommit: (id: string, h
 export function TextRegionView({ region, editing, onCommit }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const html = useRef(region.html);
+  /** Text at edit start: Esc restores it (as Esc does for formulas). */
+  const original = useRef(region.html);
   // sanitizing is expensive for large texts: only when the text changes
   const view = useMemo(() => (!htmlToPlain(region.html).trim() ? '<span class="math-placeholder">Text</span>' : sanitizeHtml(region.html)), [region.html]);
 
   useEffect(() => {
     const el = ref.current!;
     if (editing) {
+      original.current = region.html;
       el.innerHTML = sanitizeHtml(region.html);
       html.current = el.innerHTML;
       el.focus();
@@ -61,7 +64,12 @@ export function TextRegionView({ region, editing, onCommit }: Props) {
         onMouseDown={(e) => e.stopPropagation()}
         onInput={(e) => { html.current = (e.target as HTMLDivElement).innerHTML; store.updateRegion(region.id, { html: html.current }, false); }}
         onKeyDown={(e) => {
-          if (e.key === 'Escape') { e.preventDefault(); finish(); }
+          if (e.key === 'Escape') {
+            e.preventDefault();
+            ref.current!.innerHTML = sanitizeHtml(original.current);
+            store.updateRegion(region.id, { html: original.current }, false);
+            finish();
+          }
           e.stopPropagation();
         }}
         onBlur={() => setTimeout(() => { if (!ref.current?.contains(document.activeElement)) finish(); }, 120)}

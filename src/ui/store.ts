@@ -30,6 +30,9 @@ export interface AppState {
   contextMenu: { x: number; y: number; regionId?: string; page?: { x: number; y: number } } | null;
   /** Requests a manual recalculation (incremented). */
   recalcTick: number;
+  /** Something to undo / redo (for the state of the buttons). */
+  canUndo: boolean;
+  canRedo: boolean;
 }
 
 const HISTORY_LIMIT = 200;
@@ -47,7 +50,7 @@ class Store {
     selection: [], editing: null, editOriginal: null, cursor: { x: 48, y: 48 },
     fileName: null, dirty: false, zoom: 1, showChecks: true, plotEditor: null, focusRegion: null, docId: 0,
     autoCalc: true, showGrid: readPref('grid', true), sideOpen: typeof window === 'undefined' || window.innerWidth > 900,
-    sideTab: 'vars', palette: false, contextMenu: null, recalcTick: 0,
+    sideTab: 'vars', palette: false, contextMenu: null, recalcTick: 0, canUndo: false, canRedo: false,
   };
   past: Worksheet[] = [];
   future: Worksheet[] = [];
@@ -57,18 +60,24 @@ class Store {
   get = () => this.state;
   set(patch: Partial<AppState>) {
     this.state = { ...this.state, ...patch };
-    // the edited region was left: record the undo step now, if anything changed
-    if (this.editBase && this.state.editing !== this.editBase.id) this.finishEdit();
+    // the edited region / plot was left: record the undo step now, if anything changed
+    const b = this.editBase;
+    if (b && (b.kind === 'region' ? this.state.editing !== b.id : this.state.plotEditor !== b.id)) this.finishEdit();
+    // the plot settings collect all their changes into one undo step
+    if (this.state.plotEditor && !this.editBase) this.editBase = { id: this.state.plotEditor, ws: this.state.ws, kind: 'plot' };
+    const canUndo = this.past.length > 0 || (!!this.editBase && this.editBase.ws !== this.state.ws);
+    const canRedo = this.future.length > 0;
+    if (canUndo !== this.state.canUndo || canRedo !== this.state.canRedo) this.state = { ...this.state, canUndo, canRedo };
     this.listeners.forEach(l => l());
   }
 
   /** Document before the current edit; becomes an undo step only if the edit changed something. */
-  private editBase: { id: string; ws: Worksheet } | null = null;
+  private editBase: { id: string; ws: Worksheet; kind: 'region' | 'plot' } | null = null;
 
   /** Start editing a region (no undo step yet: a mere click must neither add one nor clear redo). */
   beginEdit(id: string) {
     if (this.editBase) this.finishEdit();
-    this.editBase = { id, ws: this.state.ws };
+    this.editBase = { id, ws: this.state.ws, kind: 'region' };
   }
 
   private finishEdit() {
@@ -149,7 +158,17 @@ class Store {
     });
   }
 
+  /** While typing, undo/redo work on the text being edited (like Ctrl+Z in the editor). */
+  private textUndo(cmd: 'undo' | 'redo'): boolean {
+    if (!this.state.editing || typeof document === 'undefined') return false;
+    const a = document.activeElement as HTMLElement | null;
+    if (!a || !(a.tagName === 'TEXTAREA' || a.isContentEditable)) return false;
+    document.execCommand(cmd);
+    return true;
+  }
+
   undo() {
+    if (this.textUndo('undo')) return;
     if (this.editBase) this.finishEdit();
     const prev = this.past.pop();
     if (!prev) return;
@@ -158,6 +177,7 @@ class Store {
   }
 
   redo() {
+    if (this.textUndo('redo')) return;
     if (this.editBase) this.finishEdit();
     const next = this.future.pop();
     if (!next) return;

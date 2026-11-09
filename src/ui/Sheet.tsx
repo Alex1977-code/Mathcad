@@ -142,7 +142,9 @@ export function Sheet({ result, onOpenExample, onImport, pending }: Props) {
         }), false);
       } else if (d.kind === 'resize') {
         const o = d.orig.get(d.regionId!)!;
-        store.updateRegion(d.regionId!, { w: Math.max(120, snap(o.w! + dx)), h: Math.max(80, snap(o.h! + dy)) }, false);
+        // plots need room for axis labels; text and images can be narrower
+        const isPlot = store.get().ws.regions.find(x => x.id === d.regionId)?.type === 'plot';
+        store.updateRegion(d.regionId!, { w: Math.max(isPlot ? 240 : 120, snap(o.w! + dx)), h: Math.max(isPlot ? 160 : 80, snap(o.h! + dy)) }, false);
       } else {
         setRubber({ x: Math.min(d.startX, p.x), y: Math.min(d.startY, p.y), w: Math.abs(dx), h: Math.abs(dy) });
       }

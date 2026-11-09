@@ -86,15 +86,17 @@ interface Props {
 
 export function MathRegionView({ region, result, editing, variables, showCheck, onCommit }: Props) {
   if (editing) return <MathEditor region={region} result={result} variables={variables} onCommit={onCommit} />;
-  const { latex } = composeLatex(region.src, result);
-  const err = result?.error;
+  // result of an older text (recalculation still running): show the new formula without the old value
+  const stale = !!result && result.src !== undefined && result.src !== region.src;
+  const { latex } = composeLatex(region.src, stale ? { id: region.id } : result);
+  const err = stale ? undefined : result?.error;
   return (
     <>
       {latex
         ? <div className="math-view" dangerouslySetInnerHTML={{ __html: renderLatex(latex) }} />
         : <div className="math-view math-placeholder">{region.src.trim() ? region.src : 'leer'}</div>}
       {err && <div className="error-chip">{err.message}</div>}
-      {showCheck && result?.check && result.check.status !== 'skipped' && (
+      {showCheck && !stale && result?.check && result.check.status !== 'skipped' && (
         <span
           className={`check-badge ${result.check.status === 'match' ? 'ok' : 'bad'}`}
           title={result.check.status === 'match'
@@ -225,6 +227,13 @@ function MathEditor({ region, result, variables, onCommit }: Omit<Props, 'editin
     }
     if (e.key === 'Tab') {
       e.preventDefault();
+      // templates: Tab / Shift+Tab jump to the next / previous placeholder „?“
+      if (v.includes('?')) {
+        const after = v.indexOf('?', end > s ? end : s + (v[s] === '?' ? 1 : 0));
+        const before = v.lastIndexOf('?', s - 1);
+        const k = e.shiftKey ? (before >= 0 ? before : v.lastIndexOf('?')) : (after >= 0 ? after : v.indexOf('?'));
+        if (k >= 0) { ta.current!.setSelectionRange(k, k + 1); return; }
+      }
       const next = v.slice(0, s) + '  ' + v.slice(end);
       setSrc(next, s + 2);
       return;

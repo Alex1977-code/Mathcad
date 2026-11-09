@@ -55,8 +55,9 @@ export function Dropdown({ trigger, title, children, wide }: { trigger: (open: b
     return () => { window.removeEventListener('mousedown', h); window.removeEventListener('keydown', k); };
   }, [open]);
   return (
-    <div className="menu-wrap" ref={ref} title={title}>
-      <div onMouseDown={keep} onClick={() => setOpen(o => !o)}>{trigger(open)}</div>
+    <div className="menu-wrap" ref={ref}>
+      {/* the tooltip belongs to the button only, not to every entry of the open menu */}
+      <div onMouseDown={keep} onClick={() => setOpen(o => !o)} title={open ? undefined : title}>{trigger(open)}</div>
       {open && <div className={`menu${wide ? ' wide' : ''}`} onMouseDown={keep}>{children(() => setOpen(false))}</div>}
     </div>
   );
@@ -72,7 +73,7 @@ function MatrixPicker({ close }: { close: () => void }) {
             onClick={() => { insertMatrix(i + 1, j + 1); close(); }} />
         )))}
       </div>
-      <div className="mpick-label">{hv[0]} × {hv[1]} {hv[1] === 1 ? 'Spaltenvektor' : hv[0] === 1 ? 'Zeilenvektor' : 'Matrix'}</div>
+      <div className="mpick-label">{hv[0]} × {hv[1]} {hv[0] === 1 && hv[1] === 1 ? 'Element' : hv[1] === 1 ? 'Spaltenvektor' : hv[0] === 1 ? 'Zeilenvektor' : 'Matrix'}</div>
     </div>
   );
 }
@@ -95,6 +96,7 @@ export function Ribbon() {
   const [tab, setTab] = useState<Tab>(() => readPref<Tab>('tab', 'start'));
   const select = (t: Tab) => { setTab(t); writePref('tab', t); };
   const sel = useStore(s => s.selection.length);
+  const canUndo = useStore(s => s.canUndo), canRedo = useStore(s => s.canRedo), editingNow = useStore(s => !!s.editing);
   const settings = useStore(s => s.ws.settings);
   const autoCalc = useStore(s => s.autoCalc);
   const showGrid = useStore(s => s.showGrid);
@@ -153,8 +155,8 @@ export function Ribbon() {
             </Group>
             <Group label="Bearbeiten">
               <Stack>
-                <Small icon={<IconUndo />} label="Rückgängig" title="Rückgängig (Strg+Z)" onClick={() => store.undo()} />
-                <Small icon={<IconRedo />} label="Wiederholen" title="Wiederholen (Strg+Y)" onClick={() => store.redo()} />
+                <Small icon={<IconUndo />} label="Rückgängig" title="Rückgängig (Strg+Z)" onClick={() => store.undo()} disabled={!canUndo && !editingNow} />
+                <Small icon={<IconRedo />} label="Wiederholen" title="Wiederholen (Strg+Y)" onClick={() => store.redo()} disabled={!canRedo} />
                 <Small icon={<IconTrash />} label="Löschen" title="Auswahl löschen (Entf)" onClick={deleteSelection} disabled={!sel} />
               </Stack>
               <Big icon={<IconPower />} label={anyDisabled ? 'Aktivieren' : 'Deaktivieren'} title="Auswertung der gewählten Formeln deaktivieren / wieder aktivieren" onClick={toggleDisabled} disabled={!sel} active={anyDisabled} />

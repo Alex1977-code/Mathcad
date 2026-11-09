@@ -565,3 +565,8 @@ button.status-item:hover { background: var(--bg-hover); }
 .crash h1 { font-size: 20px; margin: 0 0 12px; }
 .crash code { background: rgba(127, 127, 127, 0.15); padding: 1px 4px; border-radius: 4px; }
 .crash button { margin-top: 12px; padding: 8px 14px; border-radius: 8px; border: 1px solid #8884; background: var(--accent, #2f6fed); color: #fff; cursor: pointer; }
+
+/* the move handle has no function while a region is edited */
+.region.editing .grip { display: none !important; }
+/* result of an older version of the formula (recalculation still running) */
+.math-view.stale .fw-result, .math-view.stale .result-part { opacity: .35; transition: opacity .1s; }

@@ -21,6 +21,8 @@ export interface PlotData { traces: PlotTraceData[]; xLabel: string; yLabel: str
 
 export interface RegionResult {
   id: string;
+  /** Formula text this result belongs to (lets the UI recognise an outdated result). */
+  src?: string;
   /** LaTeX of the statement (without result). */
   latex?: string;
   /** LaTeX of the result (after "="). */
@@ -748,8 +750,18 @@ export class ComputeSession {
       if (gen !== this.gen) throw new Error('Veraltete Berechnung');
     }
     const results: Record<string, RegionResult> = {};
-    for (let i = 0; i < order.length; i++) if (this.results[i]) results[order[i].id] = this.results[i]!;
-    for (const [id, r] of Object.entries(this.globalResults)) results[id] = r;
+    for (let i = 0; i < order.length; i++) {
+      const r = this.results[i];
+      if (!r) continue;
+      const reg = order[i];
+      if (reg.type === 'math') r.src = reg.src;
+      results[reg.id] = r;
+    }
+    for (const [id, r] of Object.entries(this.globalResults)) {
+      const reg = order.find(x => x.id === id);
+      if (reg && reg.type === 'math') r.src = reg.src;
+      results[id] = r;
+    }
     return eng.finish(results, t0);
   }
 

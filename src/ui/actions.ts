@@ -21,6 +21,8 @@ export function insertSnippet(snippet: string) {
   const s = store.get();
   if (s.editing) return;
   const cur = s.cursor ?? { x: MARGIN, y: MARGIN };
+  // a program statement (return, break, try …) on its own becomes the body of a new program
+  if (snippet.startsWith('\n')) snippet = 'f(x) :=\n' + snippet.slice(1).split('\n').map(l => '  ' + l).join('\n');
   store.addRegion(newMathRegion(cur.x, cur.y, snippet), true);
   store.set({ editOriginal: '' });
 }
@@ -155,7 +157,10 @@ export function setZoom(z: number) { store.set({ zoom: Math.max(0.5, Math.min(2,
 export function zoomBy(d: number) { setZoom(store.get().zoom + d); }
 export function zoomPageWidth() {
   const sc = document.querySelector('.scroller') as HTMLElement | null;
-  if (sc) setZoom((sc.clientWidth - 80) / 794);
+  if (!sc) return;
+  // page plus side padding of .page-outer must fit exactly (round down, no horizontal scrollbar)
+  const pad = parseFloat(getComputedStyle(sc.querySelector('.page-outer') ?? sc).paddingLeft || '40') * 2;
+  setZoom(Math.floor(((sc.clientWidth - pad - 2) / 794) * 100) / 100);
 }
 export function toggleGrid() { const v = !store.get().showGrid; store.set({ showGrid: v }); writePref('grid', v); }
 export function showSide(tab: ReturnType<typeof store.get>['sideTab']) { store.set({ sideOpen: true, sideTab: tab, plotEditor: null }); }
@@ -182,7 +187,7 @@ export const app = new Proxy({} as AppHandlers, { get: (_t, k) => (handlers as u
 
 /* ---------------------------- commands --------------------------- */
 
-export interface Command { id: string; label: string; group: string; keys?: string; run: () => void; when?: () => boolean }
+export interface Command { id: string; label: string; group: string; keys?: string; run: () => void; when?: () => boolean; /** Additional search words. */ tags?: string }
 
 const hasSel = () => store.get().selection.length > 0;
 
@@ -205,8 +210,8 @@ export function commands(): Command[] {
     { id: 'all', group: 'Bearbeiten', label: 'Alles auswählen', keys: 'Strg+A', run: selectAll },
     { id: 'disable', group: 'Bearbeiten', label: 'Auswertung deaktivieren / aktivieren', run: toggleDisabled, when: hasSel },
     { id: 'math', group: 'Einfügen', label: 'Formel', keys: 'Tippen', run: () => insertRegion('math') },
-    { id: 'text', group: 'Einfügen', label: 'Textbereich', keys: '"', run: () => insertRegion('text') },
-    { id: 'plot', group: 'Einfügen', label: 'X-Y-Diagramm', run: () => insertRegion('plot') },
+    { id: 'text', group: 'Einfügen', label: 'Textbereich', keys: '"', run: () => insertRegion('text'), tags: 'notiz beschreibung' },
+    { id: 'plot', group: 'Einfügen', label: 'X-Y-Diagramm', run: () => insertRegion('plot'), tags: 'diagramm plot graph kurve' },
     { id: 'image', group: 'Einfügen', label: 'Bild …', run: () => insertImage() },
     { id: 'pagebreak', group: 'Einfügen', label: 'Seitenumbruch', run: () => insertRegion('pagebreak') },
     { id: 'matrix', group: 'Einfügen', label: 'Matrix 3×3', run: () => insertMatrix(3, 3) },
@@ -227,9 +232,9 @@ export function commands(): Command[] {
     { id: 'side', group: 'Ansicht', label: 'Seitenleiste ein/aus', run: toggleSide },
     { id: 'grid', group: 'Ansicht', label: 'Raster ein/aus', run: toggleGrid },
     { id: 'theme', group: 'Ansicht', label: 'Hell / Dunkel umschalten', run: () => app.toggleTheme() },
-    { id: 'zin', group: 'Ansicht', label: 'Vergrößern', keys: 'Strg++', run: () => zoomBy(0.1) },
-    { id: 'zout', group: 'Ansicht', label: 'Verkleinern', keys: 'Strg+-', run: () => zoomBy(-0.1) },
+    { id: 'zin', group: 'Ansicht', label: 'Vergrößern', keys: 'Strg++', run: () => zoomBy(0.1), tags: 'zoom größer' },
+    { id: 'zout', group: 'Ansicht', label: 'Verkleinern', keys: 'Strg+-', run: () => zoomBy(-0.1), tags: 'zoom kleiner' },
     { id: 'z100', group: 'Ansicht', label: 'Zoom 100 %', keys: 'Strg+0', run: () => setZoom(1) },
-    { id: 'zfit', group: 'Ansicht', label: 'Seitenbreite', run: zoomPageWidth },
+    { id: 'zfit', group: 'Ansicht', label: 'Seitenbreite', run: zoomPageWidth, tags: 'zoom anpassen breite' },
   ];
 }

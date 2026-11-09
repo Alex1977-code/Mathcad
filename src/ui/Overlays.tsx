@@ -78,7 +78,7 @@ export function CommandPalette() {
   const list = useMemo(() => {
     if (!open) return [];
     const words = q.toLowerCase().split(/\s+/).filter(Boolean);
-    return commands().filter(c => (!c.when || c.when()) && words.every(w => `${c.group} ${c.label}`.toLowerCase().includes(w)));
+    return commands().filter(c => (!c.when || c.when()) && words.every(w => `${c.group} ${c.label} ${c.tags ?? ''} ${c.id}`.toLowerCase().includes(w)));
   }, [q, open]);
   useEffect(() => { if (open) { setQ(''); setIdx(0); setTimeout(() => input.current?.focus(), 0); } }, [open]);
   useEffect(() => { setIdx(0); }, [q]);
@@ -93,7 +93,7 @@ export function CommandPalette() {
             if (e.key === 'ArrowDown') { e.preventDefault(); setIdx(i => Math.min(list.length - 1, i + 1)); }
             else if (e.key === 'ArrowUp') { e.preventDefault(); setIdx(i => Math.max(0, i - 1)); }
             else if (e.key === 'Enter') { e.preventDefault(); exec(idx); }
-            else if (e.key === 'Escape') { e.preventDefault(); close(); }
+            else if (e.key === 'Escape' || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k')) { e.preventDefault(); close(); }
             e.stopPropagation();
           }} />
         <div className="palette-list" role="listbox">
