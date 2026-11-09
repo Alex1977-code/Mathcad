@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Handgeschriebenes Testdokument im Mathcad-11–15-XML-Format (xmcd). Ergebnisse entsprechen den mathematisch korrekten Werten. -->
+<worksheet version="3.0.3" xmlns="http://schemas.mathsoft.com/worksheet30" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:ws="http://schemas.mathsoft.com/worksheet30" xmlns:ml="http://schemas.mathsoft.com/math30" xmlns:u="http://schemas.mathsoft.com/units10" xmlns:p="http://schemas.mathsoft.com/provenance10">
+  <settings>
+    <calculation>
+      <builtInVariables array-origin="0" convergence-tolerance="0.001" constraint-tolerance="0.001" random-seed="1" prn-precision="4" prn-col-width="8"/>
+    </calculation>
+    <presentation>
+      <numberFormat>
+        <general precision="3" show-trailing-zeros="false" radix="dec" complex-threshold="10" zero-threshold="15" imaginary-value="i" exponential-threshold="3"/>
+      </numberFormat>
+    </presentation>
+  </settings>
+  <regions>
+    <region region-id="1" left="18" top="12" width="300" height="16" align-x="18" align-y="24" show-border="false" show-highlight="false" is-protected="true" z-order="0" background-color="inherit" tag="">
+      <text use-page-width="false" push-down="false" lock-width="false">
+        <p style="Heading 1" margin-left="inherit" margin-right="inherit" text-indent="inherit" text-align="inherit" list-style-type="inherit" tabs="inherit"><b>Träger</b> &amp; Querschnitt</p>
+      </text>
+    </region>
+    <!-- evaluation placed visually higher than the definition of b, but on the same baseline (align-y) -->
+    <region region-id="4" left="200" top="44" width="120" height="18" align-x="230" align-y="60" show-border="false" show-highlight="false" is-protected="true" z-order="0" background-color="inherit" tag="">
+      <math optimize="false" disable-calc="false">
+        <ml:eval placeholderMultiplicationStyle="default">
+          <ml:apply><ml:mult style="auto-select"/><ml:id xml:space="preserve">a</ml:id><ml:id xml:space="preserve" subscript="Steg">b</ml:id></ml:apply>
+          <ml:unitOverride><ml:apply><ml:pow/><ml:id xml:space="preserve">cm</ml:id><ml:real>2</ml:real></ml:apply></ml:unitOverride>
+          <result xmlns="http://schemas.mathsoft.com/math30"><ml:unitedValue><ml:real>15000</ml:real><unitMonomial><unitReference unit="meter" power-numerator="2"/></unitMonomial></ml:unitedValue></result>
+        </ml:eval>
+      </math>
+    </region>
+    <region region-id="2" left="18" top="50" width="60" height="13" align-x="30" align-y="60" show-border="false" show-highlight="false" is-protected="true" z-order="0" background-color="inherit" tag="">
+      <math optimize="false" disable-calc="false">
+        <ml:define>
+          <ml:id xml:space="preserve">a</ml:id>
+          <ml:apply><ml:mult style="auto-select"/><ml:real>5</ml:real><ml:id xml:space="preserve">m</ml:id></ml:apply>
+        </ml:define>
+      </math>
+    </region>
+    <region region-id="3" left="100" top="50" width="70" height="13" align-x="110" align-y="60" show-border="false" show-highlight="false" is-protected="true" z-order="0" background-color="inherit" tag="">
+      <math optimize="false" disable-calc="false">
+        <ml:define>
+          <ml:id xml:space="preserve" subscript="Steg">b</ml:id>
+          <ml:apply><ml:mult style="auto-select"/><ml:real>300</ml:real><ml:id xml:space="preserve">mm</ml:id></ml:apply>
+        </ml:define>
+      </math>
+    </region>
+    <region region-id="5" left="18" top="90" width="90" height="13" align-x="30" align-y="100" show-border="false" show-highlight="false" is-protected="true" z-order="0" background-color="inherit" tag="">
+      <math optimize="false" disable-calc="false">
+        <ml:define>
+          <ml:function><ml:id xml:space="preserve">f</ml:id><ml:boundVars><ml:id xml:space="preserve">x</ml:id></ml:boundVars></ml:function>
+          <ml:apply><ml:plus/><ml:apply><ml:pow/><ml:id xml:space="preserve">x</ml:id><ml:real>2</ml:real></ml:apply><ml:real>1</ml:real></ml:apply>
+        </ml:define>
+      </math>
+    </region>
+    <region region-id="6" left="200" top="90" width="50" height="13" align-x="210" align-y="100" show-border="false" show-highlight="false" is-protected="true" z-order="0" background-color="inherit" tag="">
+      <math optimize="false" disable-calc="false">
+        <ml:eval><ml:apply><ml:id xml:space="preserve">f</ml:id><ml:real>3</ml:real></ml:apply>
+          <result xmlns="http://schemas.mathsoft.com/math30"><ml:real>10</ml:real></result></ml:eval>
+      </math>
+    </region>
+    <region region-id="7" left="18" top="130" width="50" height="13" align-x="30" align-y="140" show-border="false" show-highlight="false" is-protected="true" z-order="0" background-color="inherit" tag="">
+      <math optimize="false" disable-calc="false">
+        <ml:define><ml:id xml:space="preserve">i</ml:id><ml:range><ml:real>0</ml:real><ml:real>4</ml:real></ml:range></ml:define>
+      </math>
+    </region>
+    <region region-id="8" left="100" top="130" width="60" height="13" align-x="110" align-y="140" show-border="false" show-highlight="false" is-protected="true" z-order="0" background-color="inherit" tag="">
+      <math optimize="false" disable-calc="false">
+        <ml:define>
+          <ml:apply><ml:indexer/><ml:id xml:space="preserve">v</ml:id><ml:id xml:space="preserve">i</ml:id></ml:apply>
+          <ml:apply><ml:pow/><ml:id xml:space="preserve">i</ml:id><ml:real>2</ml:real></ml:apply>
+        </ml:define>
+      </math>
+    </region>
+    <region region-id="9" left="200" top="130" width="30" height="70" align-x="210" align-y="140" show-border="false" show-highlight="false" is-protected="true" z-order="0" background-color="inherit" tag="">
+      <math optimize="false" disable-calc="false">
+        <ml:eval><ml:id xml:space="preserve">v</ml:id>
+          <result xmlns="http://schemas.mathsoft.com/math30"><ml:matrix rows="5" cols="1"><ml:real>0</ml:real><ml:real>1</ml:real><ml:real>4</ml:real><ml:real>9</ml:real><ml:real>16</ml:real></ml:matrix></result></ml:eval>
+      </math>
+    </region>
+    <region region-id="10" left="18" top="220" width="120" height="30" align-x="30" align-y="230" show-border="false" show-highlight="false" is-protected="true" z-order="0" background-color="inherit" tag="">
+      <math optimize="false" disable-calc="false">
+        <ml:define>
+          <ml:function><ml:id xml:space="preserve">g</ml:id><ml:boundVars><ml:id xml:space="preserve">x</ml:id></ml:boundVars></ml:function>
+          <ml:program>
+            <ml:ifThen><ml:apply><ml:lessThan/><ml:id xml:space="preserve">x</ml:id><ml:real>0</ml:real></ml:apply><ml:real>-1</ml:real></ml:ifThen>
+            <ml:otherwise><ml:real>1</ml:real></ml:otherwise>
+          </ml:program>
+        </ml:define>
+      </math>
+    </region>
+    <region region-id="11" left="200" top="220" width="60" height="13" align-x="210" align-y="230" show-border="false" show-highlight="false" is-protected="true" z-order="0" background-color="inherit" tag="">
+      <math optimize="false" disable-calc="false">
+        <ml:eval><ml:apply><ml:plus/><ml:apply><ml:id xml:space="preserve">g</ml:id><ml:real>-2</ml:real></ml:apply><ml:apply><ml:mult/><ml:real>10</ml:real><ml:apply><ml:id xml:space="preserve">g</ml:id><ml:real>5</ml:real></ml:apply></ml:apply></ml:apply>
+          <result xmlns="http://schemas.mathsoft.com/math30"><ml:real>9</ml:real></result></ml:eval>
+      </math>
+    </region>
+    <region region-id="12" left="18" top="270" width="60" height="13" align-x="30" align-y="280" show-border="false" show-highlight="false" is-protected="true" z-order="0" background-color="inherit" tag="">
+      <math optimize="false" disable-calc="false">
+        <ml:eval><ml:apply><ml:mult/><ml:id xml:space="preserve">k</ml:id><ml:real>3</ml:real></ml:apply>
+          <result xmlns="http://schemas.mathsoft.com/math30"><ml:real>6</ml:real></result></ml:eval>
+      </math>
+    </region>
+    <region region-id="13" left="18" top="310" width="60" height="13" align-x="30" align-y="320" show-border="false" show-highlight="false" is-protected="true" z-order="0" background-color="inherit" tag="">
+      <math optimize="false" disable-calc="false">
+        <ml:globalDefine><ml:id xml:space="preserve">k</ml:id><ml:real>2</ml:real></ml:globalDefine>
+      </math>
+    </region>
+    <region region-id="14" left="18" top="350" width="160" height="13" align-x="30" align-y="360" show-border="false" show-highlight="false" is-protected="true" z-order="0" background-color="inherit" tag="">
+      <math optimize="false" disable-calc="false">
+        <ml:define>
+          <ml:id xml:space="preserve">A</ml:id>
+          <ml:matrix rows="2" cols="2"><ml:real>1</ml:real><ml:real>3</ml:real><ml:real>2</ml:real><ml:real>4</ml:real></ml:matrix>
+        </ml:define>
+      </math>
+    </region>
+    <region region-id="15" left="200" top="350" width="60" height="30" align-x="210" align-y="360" show-border="false" show-highlight="false" is-protected="true" z-order="0" background-color="inherit" tag="">
+      <math optimize="false" disable-calc="false">
+        <ml:eval><ml:apply><ml:indexer/><ml:id xml:space="preserve">A</ml:id><ml:sequence><ml:real>0</ml:real><ml:real>1</ml:real></ml:sequence></ml:apply>
+          <result xmlns="http://schemas.mathsoft.com/math30"><ml:real>2</ml:real></result></ml:eval>
+      </math>
+    </region>
+    <region region-id="16" left="18" top="400" width="200" height="13" align-x="30" align-y="410" show-border="false" show-highlight="false" is-protected="true" z-order="0" background-color="inherit" tag="">
+      <math optimize="false" disable-calc="false">
+        <ml:eval>
+          <ml:apply><ml:summation/>
+            <ml:lambda><ml:boundVars><ml:id xml:space="preserve">j</ml:id></ml:boundVars><ml:apply><ml:pow/><ml:id xml:space="preserve">j</ml:id><ml:real>2</ml:real></ml:apply></ml:lambda>
+            <ml:bounds><ml:real>1</ml:real><ml:real>10</ml:real></ml:bounds>
+          </ml:apply>
+          <result xmlns="http://schemas.mathsoft.com/math30"><ml:real>385</ml:real></result></ml:eval>
+      </math>
+    </region>
+  </regions>
+</worksheet>
