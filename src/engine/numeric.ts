@@ -410,3 +410,33 @@ export function pnormStd(x: number): number {
   }
   return x > 0 ? 1 - res : res;
 }
+
+/**
+ * Numerical limit of f at a (a = ±∞ allowed as |a| ≥ 1e300), from one side (±1) or both (0).
+ * Richardson extrapolation over shrinking steps; ±Infinity for divergence to infinity.
+ */
+export function limitNumeric(f: (x: number) => number, a: number, side: -1 | 0 | 1): number {
+  const inf = Math.abs(a) >= 1e300;
+  const one = (s: 1 | -1): number => {
+    const g = inf ? (h: number) => f(Math.sign(a) / h) : (h: number) => f(a + s * h);
+    const est = (h: number) => 2 * g(h / 2) - g(h);
+    const hs = [1e-3, 1e-4, 1e-5];
+    const vals = hs.map(est);
+    const L = vals[2];
+    const ok = vals.every(Number.isFinite) && Math.abs(vals[2] - vals[1]) <= 1e-5 * (1 + Math.abs(L));
+    if (ok) {
+      const r = +L.toPrecision(10);
+      return Math.abs(r - Math.round(r)) < 1e-8 ? Math.round(r) : r;
+    }
+    // divergence to ±∞: |g| keeps growing and keeps its sign
+    const g1 = g(1e-4), g2 = g(1e-6), g3 = g(1e-8);
+    if (Math.abs(g3) > Math.abs(g2) * 10 && Math.abs(g2) > Math.abs(g1) * 10 && Math.sign(g2) === Math.sign(g3)) return Math.sign(g3) * Infinity;
+    throw new CalcError('Grenzwert existiert nicht (keine Konvergenz)');
+  };
+  if (inf) return one(1);
+  if (side) return one(side);
+  const l = one(-1), r = one(1);
+  if (l === r) return l;
+  if (Number.isFinite(l) && Number.isFinite(r) && Math.abs(l - r) <= 1e-6 * (1 + Math.abs(l))) return l;
+  throw new CalcError(`Grenzwert existiert nicht: von links ${Number.isFinite(l) ? +l.toPrecision(6) : l < 0 ? '−∞' : '∞'}, von rechts ${Number.isFinite(r) ? +r.toPrecision(6) : r < 0 ? '−∞' : '∞'}`);
+}

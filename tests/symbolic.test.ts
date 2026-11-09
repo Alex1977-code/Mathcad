@@ -49,7 +49,7 @@ describe('Symbolische Auswertung →', () => {
   });
 
   it('meldet Nicht-Unterstütztes verständlich und bleibt darstellbar', () => {
-    expect(sym(['sum(i, i, 1, n) →'])).toBe('ERROR: Symbolisch nicht unterstützt: Summen/Produkte');
+    expect(sym(['sum(v) →'])).toBe('ERROR: Symbolisch nicht unterstützt: Summen/Produkte über Vektoren');
     expect(sym(['x → fancy'])).toMatch(/Unbekanntes Schlüsselwort/);
     for (const l of ['x^2 →', 'x → expand', 'x == 2 → solve, x', 'π → float, 4']) {
       const st = parseMathRegion(l);
@@ -81,7 +81,8 @@ describe('Symbolische Auswertung →', () => {
     expect(sym(['x^2 + 1 → substitute, x = a + 1'])).toBe('(a + 1)^2 + 1');
     expect(sym(['x*y → substitute, x = 2, y = 3'])).toBe('6');
     expect(sym(['x^2 - 5*x + 6 → factor'])).toBe('(x - 2)*(x - 3)');
-    expect(sym(['2*x^3 - 2*x → factor'])).toBe('2*(x + 1)*x*(x - 1)');
+    expect(sym(['2*x^3 - 2*x → factor'])).toBe('2*x*(x + 1)*(x - 1)');
+    expect(sym(['2*x^2 + 3*x + 1 → factor'])).toBe('(x + 1)*(2*x + 1)');
     expect(sym(['x^2 - 2*x + 1 → factor'])).toBe('(x - 1)^2');
     expect(sym(['x^2 + 1 → factor'])).toMatch(/^ERROR: factor: keine rationalen/);
     expect(sym(['3*x^2 + a*x - 7 → coeffs, x'])).toBe('[-7; a; 3]');
@@ -97,5 +98,47 @@ describe('Symbolische Auswertung →', () => {
     expect(sym(['[a*x + y == 1; x - y == 0] → solve, [x; y]'])).toBe('[1/(a + 1), 1/(a + 1)]');
     expect(sym(['[x*y == 1; x == 2] → solve, x, y'])).toMatch(/nur linear/);
     expect(sym(['[deriv(x^2, x); x + x] →'])).toBe('[2*x; 2*x]');
+  });
+
+  it('Summen und Produkte in geschlossener Form', () => {
+    expect(sym(['sum(i, i, 1, n) →'])).toBe('n*(n + 1)/2');
+    expect(sym(['sum(i^2, i, 1, n) →'])).toBe('n*(n + 1)*(2*n + 1)/6');
+    expect(sym(['sum(i^3, i, 1, n) →'])).toBe('n^2*(n + 1)^2/4');
+    expect(sym(['sum(2^i, i, 0, n) →'])).toBe('2^(n + 1) - 1');
+    expect(sym(['sum((1/2)^i, i, 0, ∞) →'])).toBe('2');
+    expect(sym(['sum(i, i, 1, 10) →'])).toBe('55');
+    expect(sym(['prod(i, i, 1, 5) →'])).toBe('120');
+    expect(sym(['sum(i, i, 1, ∞) →'])).toMatch(/divergiert/);
+    expect(sym(['sum(1/i, i, 1, n) →'])).toMatch(/nur Polynome und geometrische/);
+    // closed form agrees with the numeric sum
+    const r = run(['S(n) := ' + run(['sum(i^2 + 3*i, i, 2, n) →'])[0].resultText, 'S(17) - sum(i^2 + 3*i, i, 2, 17) ='])[1];
+    expect(r.resultText).toBe('0');
+  });
+
+  it('Grenzwerte lim(f, x, a) symbolisch und numerisch', () => {
+    expect(sym(['lim(sin(x)/x, x, 0) →'])).toBe('1');
+    expect(sym(['lim((x^2 - 1)/(x - 1), x, 1) →'])).toBe('2');
+    expect(sym(['lim((1 + 1/x)^x, x, ∞) →'])).toBe('e');
+    expect(sym(['lim((3*x^2 + 1)/(x^2 + 5), x, ∞) →'])).toBe('3');
+    expect(sym(['lim(a*x/x, x, 0) →'])).toBe('a');
+    expect(sym(['lim(x*ln(x), x, 0, "right") →'])).toBe('0');
+    expect(sym(['lim(1/x, x, 0, "right") →'])).toBe('∞');
+    expect(sym(['lim(1/x, x, 0) →'])).toMatch(/von links −∞, von rechts ∞/);
+    expect(run(['lim(sin(x)/x, x, 0) ='])[0].resultText).toBe('1');
+    expect(run(['lim((1 + 1/x)^x, x, ∞) ='])[0].resultText).toBe('2.718');
+    expect(() => katex.renderToString(run(['lim(1/x, x, 0, "right") →'])[0].latex ?? '', { throwOnError: true })).not.toThrow();
+  });
+
+  it('Partialbruchzerlegung → parfrac', () => {
+    expect(sym(['1/(x^2 - 1) → parfrac, x'])).toBe('-(1/(2*(x + 1))) + 1/(2*(x - 1))');
+    expect(sym(['(x^3 + 1)/(x^2 - 3*x + 2) → parfrac'])).toBe('x + 3 - 2/(x - 1) + 9/(x - 2)');
+    expect(sym(['1/(x*(x+1)^2) → parfrac'])).toBe('-(1/(x + 1)) - 1/(x + 1)^2 + 1/x');
+    expect(sym(['1/(x^3 + x) → parfrac'])).toBe('1/x - x/(x^2 + 1)');
+    // the decomposition equals the original function
+    for (const f of ['(2*x + 5)/(x^2 + x - 6)', '(x^4 + 1)/((x - 1)^2*(x + 2))', '3/(x^2*(x^2 + 4))']) {
+      const pf = run([`${f} → parfrac`])[0].resultText!;
+      const chk = run([`F(x) := ${f}`, `G(x) := ${pf}`, 'abs(F(0.37) - G(0.37)) + abs(F(5.3) - G(5.3)) < 1e-9 =']);
+      expect(chk[2].resultText, `${f} → ${pf}`).toBe('1');
+    }
   });
 });

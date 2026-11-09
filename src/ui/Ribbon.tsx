@@ -217,6 +217,8 @@ export function Ribbon() {
                 <Sym l="\xrightarrow{\textsf{factor}}" title="Faktorisieren  x^2 - 5*x + 6 → factor" snippet=" → factor" />
                 <Sym l="\xrightarrow{\textsf{series}}" title="Taylorreihe  exp(x) → series, x = 0, 6" snippet=" → series, x = 0, 6" />
                 <Sym l="\int\!\mathrm{d}x" title="Unbestimmtes Integral (symbolisch)  int(f, x) →" snippet="int(?, x) →" />
+                <Sym l="\lim" title="Grenzwert  lim(f, x, a) – auch a = ∞ und lim(f, x, 0, &quot;right&quot;)" snippet="lim(?, x, 0)" />
+                <Sym l="\xrightarrow{\textsf{parfrac}}" title="Partialbruchzerlegung  1/(x^2 - 1) → parfrac" snippet=" → parfrac" />
               </SymGrid>
             </Group>
             <Group label="Vergleich & Logik">

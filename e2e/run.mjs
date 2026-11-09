@@ -266,6 +266,11 @@ try {
   const sym2 = await page.locator('.region.math-region').evaluateAll(els => els.slice(-4).map(e => e.innerText.replace(/\s+/g, '')));
   ok(/→ex[·⋅]\(x−1\)$/.test(sym2[0]) && /solve,x,y.*6.*4/.test(sym2[1]) && /\(x−2\)[·⋅]?\(x−3\)/.test(sym2[2]) && /1\+x\+/.test(sym2[3]) && (await page.locator('.region.error').count()) === 0,
     `Symbolisch: Integral, Gleichungssystem, factor, series (${JSON.stringify(sym2)})`);
+  for (const t of ['sum(i^2,i,1,n)->', 'lim(sin(x)/x,x,0)->', '(x^3+1)/(x^2-3*x+2)-> parfrac']) { await page.keyboard.type(t); await page.keyboard.press('Enter'); }
+  await idle();
+  const sym3 = await page.locator('.region.math-region').evaluateAll(els => els.slice(-3).map(e => e.innerText.replace(/\s+/g, '')));
+  ok(/n[·⋅]\(n\+1\)[·⋅]\(2[·⋅]n\+1\)/.test(sym3[0]) && /→1$/.test(sym3[1]) && /x\+3−/.test(sym3[2]) && (await page.locator('.region.error').count()) === 0,
+    `Symbolisch: Summe, Grenzwert, Partialbrüche (${JSON.stringify(sym3)})`);
   await shot('14-symbolisch.png');
 
   /* 13 · responsiveness on a large imported sheet: an edit at the end is recalculated incrementally */

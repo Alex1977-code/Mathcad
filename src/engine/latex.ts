@@ -122,6 +122,13 @@ export function toLatex(n: Node, ctx: LatexCtx = {}): string {
       return '';
     case 'nroot': return `\\sqrt[${L(n.n)}]{${L(stripParen(n.a))}}`;
     case 'call': {
+      // Mathcad's limit operator:  lim_{x→a⁺} f
+      if (n.name === 'lim' && n.args.length >= 3 && n.args[1].k === 'id') {
+        const sd = n.args[3]?.k === 'str' ? n.args[3].v.toLowerCase() : '';
+        const sup = ['right', 'rechts', '+'].includes(sd) ? '^{+}' : ['left', 'links', '-'].includes(sd) ? '^{-}' : '';
+        const body = prec(n.args[0]) < 6 ? `\\left(${L(n.args[0])}\\right)` : L(n.args[0]);
+        return `\\lim_{${nameLatex(n.args[1].name, ctx)}\\to ${L(n.args[2])}${sup}}${body}`;
+      }
       const builtin = ctx.isBuiltin?.(n.name) ?? false;
       const fname = builtin && n.name.length > 1 && /^[A-Za-z]+$/.test(n.name) ? `\\operatorname{${n.name}}` : nameLatex(n.name, ctx, { upright: builtin });
       return `${fname}\\left(${n.args.map(L).join(',\\,')}\\right)`;

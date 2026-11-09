@@ -9,7 +9,7 @@ import {
 import { cross3 as crossFn } from './evaluator';
 import { hasOffset, mkQ, qSum, withValue } from './quantity';
 import { EXTRA_BUILTINS } from './builtins2';
-import { brent, pnormStd, qnormStd, rootFromGuess, solveSystem } from './numeric';
+import { brent, limitNumeric, pnormStd, qnormStd, rootFromGuess, solveSystem } from './numeric';
 import { DISTRIBUTIONS, distFunction, distRandom, gammaQ, lgamma, percentile, setStatsSeed } from './stats';
 
 type Builtin = (args: Val[], ev: Evaluator) => Val;
@@ -732,6 +732,15 @@ function stdev(e: Val[], sample: boolean): Val { return math.sqrt(variance(e, sa
 /* Lazy builtins (receive unevaluated nodes)                           */
 /* ------------------------------------------------------------------ */
 
+/** Side of a one-sided limit: "right"/"rechts"/"+" → 1, "left"/"links"/"-" → −1. */
+export function limitSide(n: Node | undefined): -1 | 0 | 1 {
+  if (!n) return 0;
+  const s = n.k === 'str' ? n.v.toLowerCase() : n.k === 'id' ? n.name.toLowerCase() : '';
+  if (['right', 'rechts', '+'].includes(s)) return 1;
+  if (['left', 'links', '-'].includes(s)) return -1;
+  throw new CalcError('lim: Seite "left" oder "right"');
+}
+
 const varName = (n: Node, fn: string): string => {
   if (n.k !== 'id') throw new CalcError(`${fn}: zweites Argument muss eine Variable sein`);
   return n.name;
@@ -761,6 +770,19 @@ export const LAZY_BUILTINS: Record<string, Lazy> = {
     const x = rootFromGuess(f, t0);
     checkRoot(f, x, [t0]);
     return withUnit(x, guess);
+  },
+  /** lim(f, x, a [, "left" | "right"]): numerical limit (symbolically with →). */
+  lim: (args, scope, ev) => {
+    if (args.length < 3 || args.length > 4) throw new CalcError('lim(f(x), x, a) oder lim(f(x), x, a, "right") erwartet');
+    const v = varName(args[1], 'lim');
+    const a = ev.eval(args[2], scope);
+    const side = limitSide(args[3]);
+    const ta = isUnit(a) ? (a as Unit).value as number : toNumber(a);
+    const { f, probe } = ev.numericFn(args[0], v, scope, a);
+    const L = limitNumeric(f, ta, side);
+    // keep the unit of the function value
+    const pv = probe(Math.abs(ta) >= 1e300 ? Math.sign(ta) * 1e6 : ta + (side || 1) * 1e-3);
+    return isUnit(pv) ? withUnit(L, pv) : L;
   },
   Find: (args, scope, ev) => solveBlock(args, scope, ev, false),
   find: (args, scope, ev) => solveBlock(args, scope, ev, false),

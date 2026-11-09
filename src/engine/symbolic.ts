@@ -12,9 +12,11 @@ import type { Node } from './ast';
 import { math, lookupUnit } from './units';
 import { CalcError, isUnit, type FnVal, type Scope, type Val } from './values';
 import { siUnitFactors } from './format';
+import { limitNumeric } from './numeric';
+import { limitSide } from './builtins';
 
 export interface SymKeyword { name: string; args: Node[] }
-export const SYM_KEYWORDS = ['simplify', 'expand', 'float', 'solve', 'substitute', 'factor', 'coeffs', 'series'];
+export const SYM_KEYWORDS = ['simplify', 'expand', 'float', 'solve', 'substitute', 'factor', 'coeffs', 'series', 'parfrac'];
 
 /** Our function names → mathjs names (and back). */
 const TO_MATH: Record<string, string> = {
@@ -209,6 +211,109 @@ function integrate(m0: MathNode, x: string, depth = 0): MathNode {
   throw fail();
 }
 
+/* ---------------------------- sums and products ---------------------------- */
+
+/** Bernoulli numbers B0 … B10 (B1 = +1/2) for Faulhaber's formula. */
+const BERNOULLI = ['1', '1/2', '1/6', '0', '-1/30', '0', '1/42', '0', '-1/30', '0', '5/66'];
+const binom = (n: number, k: number) => { let r = 1; for (let i = 1; i <= k; i++) r = r * (n - k + i) / i; return Math.round(r); };
+/** Σ_{i=1}^{n} i^k as mathjs text in n. */
+function faulhaber(k: number, n: string): string {
+  if (k === 0) return n;
+  const terms: string[] = [];
+  for (let j = 0; j <= k; j++) if (BERNOULLI[j] !== '0') terms.push(`${binom(k + 1, j)} * (${BERNOULLI[j]}) * ${n}^${k + 1 - j}`);
+  return `(${terms.join(' + ')}) / ${k + 1}`;
+}
+const isInf = (m: MathNode) => { const v = constVal(m); return v !== undefined && !Number.isFinite(v); };
+
+/** Closed form of Σ / Π over i = lo … hi. */
+function closedIter(op: 'sum' | 'prod', f: MathNode, i: string, lo: MathNode, hi: MathNode): MathNode {
+  const loV = constVal(lo), hiV = constVal(hi);
+  // small numeric range: write the terms out
+  if (loV !== undefined && hiV !== undefined && Number.isInteger(loV) && Number.isFinite(hiV) && Number.isInteger(hiV) && hiV - loV <= 200) {
+    if (hiV < loV) return new math.ConstantNode(op === 'sum' ? 0 : 1);
+    const parts: string[] = [];
+    for (let k = loV; k <= hiV; k++) parts.push(str(subst(f, i, new math.ConstantNode(k))));
+    return S(P(parts.join(op === 'sum' ? ' + ' : ' * ')));
+  }
+  if (op === 'prod') {
+    if (!hasSym(f, i) && !isInf(hi)) return S(P(`${str(f)}^(${str(hi)} - ${str(lo)} + 1)`));
+    if (symName(f) === i && constVal(lo) === 1 && !isInf(hi)) return S(P(`${str(hi)}!`));
+    throw unsupported('Produkt mit symbolischen Grenzen');
+  }
+  if (!hasSym(f, i)) {
+    if (isInf(hi)) throw new CalcError('Die Summe divergiert');
+    return S(P(`${str(f)} * (${str(hi)} - ${str(lo)} + 1)`));
+  }
+  // polynomial in i: Faulhaber
+  const cs = polyCoeffs(f, i);
+  if (cs && cs.length <= BERNOULLI.length) {
+    if (isInf(hi)) throw new CalcError('Die Summe divergiert');
+    const loM1 = `(${str(lo)} - 1)`;
+    return S(P(cs.map((c, k) => (isZero(c) ? '0' : `${str(c)} * ((${faulhaber(k, str(hi))}) - (${faulhaber(k, loM1)}))`)).join(' + ')));
+  }
+  // geometric: constant ratio f(i+1)/f(i)
+  const r = S(P(`${str(subst(f, i, P(`${i} + 1`)))} / ${str(f)}`));
+  if (!hasSym(r, i)) {
+    const first = S(subst(f, i, lo));
+    if (isInf(hi)) {
+      const rv = constVal(r);
+      if (rv === undefined || Math.abs(rv) >= 1) throw new CalcError('Die geometrische Reihe konvergiert nur für |q| < 1');
+      return S(P(`${str(first)} / (1 - ${str(r)})`));
+    }
+    return S(P(`${str(first)} * (${str(r)}^(${str(hi)} - ${str(lo)} + 1) - 1) / (${str(r)} - 1)`));
+  }
+  throw unsupported('Summe (nur Polynome und geometrische Reihen in geschlossener Form)');
+}
+
+/* --------------------------------- limits ---------------------------------- */
+
+/** Recognise e, π and fractions in a numerical limit. */
+function niceNumber(v: number): MathNode {
+  if (!Number.isFinite(v)) return P(v < 0 ? '-Infinity' : 'Infinity');
+  for (const [c, t] of [[Math.E, 'e'], [Math.PI, 'pi']] as const) {
+    const q = v / c, f = toFraction(q);
+    if (f && f[1] <= 12 && Math.abs(f[0]) <= 100 && Math.abs(q - f[0] / f[1]) < 1e-8) return S(P(`${f[0]} / ${f[1]} * ${t}`));
+  }
+  const f = toFraction(v);
+  return f && f[1] <= 1000 ? S(P(`${f[0]} / ${f[1]}`)) : new math.ConstantNode(v);
+}
+
+/** lim_{x→a} f: substitution, L'Hôpital for 0/0 and ∞/∞, otherwise numerically (only without other unknowns). */
+function limitOf(f: MathNode, x: string, at: MathNode, side: -1 | 0 | 1, depth = 0): MathNode {
+  if (depth > 8) throw new CalcError('lim: kein Ergebnis (zu viele Umformungen)');
+  const av = constVal(at);
+  const others = (() => { let o = false; f.traverse((n, path) => { const s = symName(n); if (s && path !== 'fn' && s !== x && !['pi', 'e', 'i', 'Infinity'].includes(s)) o = true; }); return o; })();
+  const numeric = () => {
+    if (others || av === undefined) throw new CalcError('lim: symbolisch nicht bestimmbar');
+    const fn = (t: number) => { const v = f.evaluate({ [x]: t }); return typeof v === 'number' ? v : NaN; };
+    return niceNumber(limitNumeric(fn, Number.isFinite(av) ? av : Math.sign(av) * 1e308, side));
+  };
+  if (av !== undefined && !Number.isFinite(av)) {
+    if (!others) return numeric();
+    // x → ±∞: x = ±1/t, t → 0+
+    const t = x + 'q';
+    return limitOf(S(subst(f, x, P(`${av < 0 ? '-' : ''}1 / ${t}`))), t, new math.ConstantNode(0), 1, depth + 1);
+  }
+  const node = f as MNode;
+  if (f.type === 'OperatorNode' && node.fn === 'divide') {
+    const [a, b] = node.args as MathNode[];
+    const a0 = S(subst(a, x, at)), b0 = S(subst(b, x, at));
+    const z = (m: MathNode) => isZero(m), inf = (m: MathNode) => isInf(m);
+    if ((z(a0) && z(b0)) || (inf(a0) && inf(b0))) return limitOf(S(P(`${str(D(a, x))} / ${str(D(b, x))}`)), x, at, side, depth + 1);
+    if (!z(b0) && !inf(b0) && !inf(a0)) { const r = S(P(`${str(a0)} / ${str(b0)}`)); if (!hasNaN(r)) return r; }
+    return numeric();
+  }
+  const direct = S(subst(f, x, at));
+  if (!hasNaN(direct) && (others || constVal(direct) === undefined || Number.isFinite(constVal(direct)!))) return direct;
+  return numeric();
+}
+function hasNaN(m: MathNode) {
+  let bad = false;
+  m.traverse(n => { if (n.type === 'ConstantNode' && typeof (n as MNode).value === 'number' && !Number.isFinite((n as MNode).value as number)) bad = true; if (symName(n) === 'NaN' || symName(n) === 'Infinity') bad = true; });
+  if (!bad && !hasAnySymbol(m)) { try { const v = m.evaluate(); if (typeof v === 'number' && !Number.isFinite(v)) bad = true; } catch { bad = true; } }
+  return bad;
+}
+
 /* -------------------------- our tree → mathjs text -------------------------- */
 
 /** Our syntax tree → mathjs text, with substitution of known values and inlining of user functions. */
@@ -223,6 +328,7 @@ function toMathText(n: Node, scope: Scope, env: Map<string, string>, names: Name
       const bound = env.get(n.name);
       if (bound !== undefined) return bound;
       if (n.name === 'π') return 'pi';
+      if (n.name === '∞') return 'Infinity';
       if (n.name === 'e' && scope.get('e') === undefined) return 'e';
       const v = scope.get(n.name);
       if (v !== undefined) { const t = valueText(v, names); if (t !== null) return t; }
@@ -258,7 +364,19 @@ function toMathText(n: Node, scope: Scope, env: Map<string, string>, names: Name
       if (!n.lo || !n.hi) return str(F);
       return `(${str(subst(F, s, P(go(n.hi))))} - ${str(subst(F, s, P(go(n.lo))))})`;
     }
+    case 'iter': {
+      if (!n.v || !n.lo || !n.hi) throw unsupported('Summen/Produkte über Vektoren');
+      const s = names.sym(n.v);
+      const body = S(P(go(n.body, new Map([...env, [n.v, s]]))));
+      return str(closedIter(n.op, body, s, S(P(go(n.lo))), S(P(go(n.hi)))));
+    }
     case 'call': {
+      if (n.name === 'lim' && !scope.get('lim')) {
+        if (n.args.length < 3 || n.args[1].k !== 'id') throw new CalcError('lim(f(x), x, a) oder lim(f(x), x, a, "right") erwartet');
+        const s = names.sym(n.args[1].name);
+        const f = S(P(go(n.args[0], new Map([...env, [n.args[1].name, s]]))));
+        return str(limitOf(f, s, S(P(go(n.args[2]))), limitSide(n.args[3])));
+      }
       const f = env.has(n.name) ? undefined : scope.get(n.name);
       if (f && typeof f === 'object' && (f as FnVal).kind === 'fn' && (f as FnVal).body && (f as FnVal).body!.k !== 'program') {
         const fn = f as FnVal;
@@ -275,7 +393,7 @@ function toMathText(n: Node, scope: Scope, env: Map<string, string>, names: Name
       throw unsupported(`${n.name}(…)`);
     }
     default:
-      throw unsupported(n.k === 'matrix' ? 'Matrizen' : n.k === 'iter' ? 'Summen/Produkte' : n.k);
+      throw unsupported(n.k === 'matrix' ? 'Matrizen' : n.k);
   }
 }
 
@@ -288,11 +406,13 @@ function fromMath(m: MathNode, names: Names): Node {
     case 'ConstantNode': {
       const v = node.value as number;
       if (typeof v !== 'number') throw unsupported('Konstante');
+      if (!Number.isFinite(v)) return v < 0 ? { k: 'un', op: 'neg', a: { k: 'id', name: '∞' } } : { k: 'id', name: '∞' };
       return v < 0 ? { k: 'un', op: 'neg', a: { k: 'num', v: -v } } : { k: 'num', v };
     }
     case 'SymbolNode': {
       const s = node.name as string;
       if (s === 'pi') return { k: 'id', name: 'π' };
+      if (s === 'Infinity') return { k: 'id', name: '∞' };
       if (s === 'i') return { k: 'imag', v: 1 };
       return { k: 'id', name: names.name(s) ?? s };
     }
@@ -388,8 +508,52 @@ function factorPoly(m: MathNode, names: Names): Node {
   const cs = polyCoeffs(m, x);
   const vals = cs?.map(constVal);
   if (!cs || !vals || vals.some(v => v === undefined)) throw new CalcError('factor: nur Polynome mit Zahlenkoeffizienten');
-  let c = vals as number[];
-  const lead = c[c.length - 1];
+  const lead = (vals as number[])[vals.length - 1];
+  const { roots, rest: c } = rationalRoots(vals as number[]);
+  if (!roots.length) throw new CalcError('factor: keine rationalen Nullstellen – das Polynom ist über den rationalen Zahlen nicht zerlegbar');
+  const X: Node = { k: 'id', name: names.name(x)! };
+  const counts = new Map<number, number>();
+  for (const r of roots) counts.set(r, (counts.get(r) ?? 0) + 1);
+  const factors: Node[] = [];
+  let scale = lead;
+  // order as in Mathcad: x first, then (x + 1), (2·x + 1) …
+  for (const [r, k] of [...counts].sort((a, b) => (a[0] === 0 ? -1 : b[0] === 0 ? 1 : a[0] - b[0]))) {
+    const fr = toFraction(Math.abs(r));
+    let base: Node;
+    if (fr && fr[1] > 1) {
+      // root p/q → (q·x ∓ p); the leading factor shrinks by q per power
+      base = { k: 'paren', a: { k: 'bin', op: r < 0 ? '+' : '-', a: { k: 'bin', op: '*', a: { k: 'num', v: fr[1] }, b: X }, b: { k: 'num', v: fr[0] } } };
+      scale /= fr[1] ** k;
+    } else base = linFactor(X, r);
+    factors.push(k === 1 ? base : { k: 'bin', op: '^', a: base, b: { k: 'num', v: k } });
+  }
+  if (c.length > 1) {
+    // remaining factor without rational roots (normalised by the leading coefficient)
+    const restTxt = c.map((a, i) => `(${a / lead}) * ${x}^${i}`).join(' + ');
+    factors.push({ k: 'paren', a: fromMath(S(P(restTxt)), names) });
+  }
+  let prod = factors.reduce((acc, f) => ({ k: 'bin', op: '*', a: acc, b: f }) as Node);
+  const fs = toFraction(Math.abs(scale));
+  if (!fs) return { k: 'bin', op: '*', a: numNode(scale), b: prod };
+  if (fs[0] !== 1) prod = { k: 'bin', op: '*', a: { k: 'num', v: fs[0] }, b: prod };
+  if (fs[1] !== 1) prod = { k: 'bin', op: '/', a: prod, b: { k: 'num', v: fs[1] } };
+  return scale < 0 ? { k: 'un', op: 'neg', a: prod } : prod;
+}
+
+/** Number as exact fraction node (−3/4 …). */
+function numNode(v: number): Node {
+  const f = toFraction(Math.abs(v)) ?? [Math.abs(v), 1];
+  const a: Node = f[1] === 1 ? { k: 'num', v: f[0] } : { k: 'bin', op: '/', a: { k: 'num', v: f[0] }, b: { k: 'num', v: f[1] } };
+  return v < 0 ? { k: 'un', op: 'neg', a } : a;
+}
+/** (x − r), or x for r = 0. */
+function linFactor(X: Node, r: number): Node {
+  return r === 0 ? X : { k: 'paren', a: { k: 'bin', op: r < 0 ? '+' : '-', a: X, b: numNode(Math.abs(r)) } };
+}
+
+/** Rational roots (with multiplicity) of a polynomial c0 + c1·x + …; rest = remaining coefficients. */
+function rationalRoots(c0: number[]): { roots: number[]; rest: number[] } {
+  let c = c0.slice();
   const roots: number[] = [];
   // rational root theorem on the integer-scaled polynomial; repeated roots allowed
   const scaleInt = (q: number[]) => {
@@ -415,27 +579,91 @@ function factorPoly(m: MathNode, names: Names): Node {
     for (let i = c.length - 1; i >= 1; i--) { carry = c[i] + carry * found; nc[i - 1] = carry; }
     c = nc;
   }
-  if (!roots.length) throw new CalcError('factor: keine rationalen Nullstellen – das Polynom ist über den rationalen Zahlen nicht zerlegbar');
-  const X: Node = { k: 'id', name: names.name(x)! };
-  const numNode = (v: number): Node => {
-    const f = toFraction(Math.abs(v))!;
-    const a: Node = f[1] === 1 ? { k: 'num', v: f[0] } : { k: 'bin', op: '/', a: { k: 'num', v: f[0] }, b: { k: 'num', v: f[1] } };
-    return v < 0 ? { k: 'un', op: 'neg', a } : a;
-  };
+  return { roots, rest: c };
+}
+
+/* ------------------------------ partial fractions ------------------------------ */
+
+function partialFractions(m: MathNode, xArg: Node | undefined, names: Names): Node {
+  let x: string;
+  if (xArg) { if (xArg.k !== 'id') throw new CalcError('parfrac, x'); x = names.sym(xArg.name); }
+  else {
+    const syms = new Set<string>();
+    m.traverse((n, path) => { const s = symName(n); if (s && path !== 'fn' && names.name(s)) syms.add(s); });
+    if (syms.size !== 1) throw new CalcError('parfrac braucht die Variable:  → parfrac, x');
+    x = [...syms][0];
+  }
+  let nd: { numerator: MathNode; denominator: MathNode };
+  try { nd = math.rationalize(m, {}, true) as unknown as { numerator: MathNode; denominator: MathNode }; } catch { throw new CalcError('parfrac: nur gebrochen rationale Funktionen'); }
+  const coeffs = (p: MathNode | null) => { const cs = p ? polyCoeffs(p, x) : [new math.ConstantNode(1)]; const v = cs?.map(constVal); if (!v || v.some(q => q === undefined)) throw new CalcError('parfrac: nur Zahlenkoeffizienten'); return v as number[]; };
+  let num = coeffs(nd.numerator);
+  const den = coeffs(nd.denominator ?? null);
+  if (den.length < 2) throw new CalcError('parfrac: der Nenner hängt nicht von der Variablen ab');
+  // polynomial part by long division
+  const quot: number[] = new Array(Math.max(0, num.length - den.length + 1)).fill(0);
+  num = num.slice();
+  for (let k = num.length - den.length; k >= 0; k--) {
+    const q = num[k + den.length - 1] / den[den.length - 1];
+    quot[k] = q;
+    for (let j = 0; j < den.length; j++) num[k + j] -= q * den[j];
+  }
+  const rem = num.slice(0, den.length - 1);
+  const { roots, rest } = rationalRoots(den);
+  const restMonic = rest.map(c => c / rest[rest.length - 1]);
+  const evalP = (q: number[], v: number) => q.reduceRight((acc, a) => acc * v + a, 0);
+  // unknowns: A/(x − r)^j for every root multiplicity, and (B0 + B1·x + …)/rest
   const counts = new Map<number, number>();
   for (const r of roots) counts.set(r, (counts.get(r) ?? 0) + 1);
-  const factors: Node[] = [];
-  for (const [r, k] of [...counts].sort((a, b) => a[0] - b[0])) {
-    const base: Node = r === 0 ? X : { k: 'paren', a: { k: 'bin', op: r < 0 ? '+' : '-', a: X, b: numNode(Math.abs(r)) } };
-    factors.push(k === 1 ? base : { k: 'bin', op: '^', a: base, b: { k: 'num', v: k } });
+  const basis: { f: (v: number) => number; node: (c: number) => Node | null }[] = [];
+  const X: Node = { k: 'id', name: names.name(x)! };
+  const restNode: Node | null = restMonic.length > 1 ? fromMath(S(P(restMonic.map((c, i) => `(${c}) * ${x}^${i}`).join(' + '))), names) : null;
+  for (const [r, mult] of [...counts].sort((a, b) => a[0] - b[0])) {
+    for (let j = 1; j <= mult; j++) {
+      basis.push({
+        f: v => 1 / (v - r) ** j,
+        node: c => {
+          const f = toFraction(Math.abs(c)) ?? [Math.abs(c), 1];
+          const pow: Node = j === 1 ? linFactor(X, r) : { k: 'bin', op: '^', a: linFactor(X, r), b: { k: 'num', v: j } };
+          const t: Node = { k: 'bin', op: '/', a: { k: 'num', v: f[0] }, b: f[1] === 1 ? pow : { k: 'bin', op: '*', a: { k: 'num', v: f[1] }, b: pow } };
+          return c < 0 ? { k: 'un', op: 'neg', a: t } : t;
+        },
+      });
+    }
   }
-  if (c.length > 1) {
-    // remaining factor without rational roots (normalised by the leading coefficient)
-    const restTxt = c.map((a, i) => `(${a / lead}) * ${x}^${i}`).join(' + ');
-    factors.push({ k: 'paren', a: fromMath(S(P(restTxt)), names) });
+  const restCoef: number[] = [];
+  for (let k = 0; k < restMonic.length - 1; k++) basis.push({ f: v => v ** k / evalP(restMonic, v), node: () => null });
+  // fit at sample points (exact for the right basis)
+  const n = basis.length;
+  const pts = Array.from({ length: n }, (_, i) => 0.37 + 1.13 * i + 0.071 * i * i).map(v => (roots.some(r => Math.abs(v - r) < 1e-3) ? v + 0.5 : v));
+  const A = pts.map(v => basis.map(b => b.f(v)));
+  const rhs = pts.map(v => evalP(rem, v) / evalP(den, v));
+  const sol = gaussSolve(A, rhs).map(c => { const f = toFraction(c); return f ? f[0] / f[1] : c; });
+  const terms: Node[] = [];
+  if (quot.some(c => Math.abs(c) > 1e-12)) terms.push(fromMath(S(P(quot.map((c, i) => `(${c}) * ${x}^${i}`).join(' + '))), names));
+  sol.forEach((c, i) => { if (i < basis.length - (restMonic.length - 1)) { if (Math.abs(c) > 1e-12) terms.push(basis[i].node(c)!); } else restCoef.push(c); });
+  if (restNode && restCoef.some(c => Math.abs(c) > 1e-12)) {
+    const numer = fromMath(S(P(restCoef.map((c, i) => `(${toFraction(c) ? toFraction(c)!.join('/') : c}) * ${x}^${i}`).join(' + '))), names);
+    terms.push({ k: 'bin', op: '/', a: numer, b: restNode });
   }
-  const prod = factors.reduce((acc, f) => ({ k: 'bin', op: '*', a: acc, b: f }) as Node);
-  return Math.abs(lead - 1) < 1e-12 ? prod : { k: 'bin', op: '*', a: numNode(lead), b: prod };
+  if (!terms.length) return { k: 'num', v: 0 };
+  return terms.reduce((acc, t) => {
+    if (t.k === 'un' && t.op === 'neg') return { k: 'bin', op: '-', a: acc, b: t.a };
+    if (t.k === 'bin' && t.op === '/' && t.a.k === 'un' && t.a.op === 'neg') return { k: 'bin', op: '-', a: acc, b: { ...t, a: t.a.a } };
+    return { k: 'bin', op: '+', a: acc, b: t };
+  });
+}
+
+/** Small dense linear solve (partial pivoting). */
+function gaussSolve(A: number[][], b: number[]): number[] {
+  const n = b.length, M = A.map((r, i) => [...r, b[i]]);
+  for (let c = 0; c < n; c++) {
+    let p = c;
+    for (let r = c + 1; r < n; r++) if (Math.abs(M[r][c]) > Math.abs(M[p][c])) p = r;
+    [M[c], M[p]] = [M[p], M[c]];
+    if (Math.abs(M[c][c]) < 1e-14) throw new CalcError('parfrac: Zerlegung nicht bestimmbar');
+    for (let r = 0; r < n; r++) if (r !== c) { const q = M[r][c] / M[c][c]; for (let k = c; k <= n; k++) M[r][k] -= q * M[c][k]; }
+  }
+  return M.map((r, i) => r[n] / M[i][i]);
 }
 
 /* ---------------------------------- main ----------------------------------- */
@@ -481,6 +709,7 @@ export function symbolicEval(expr: Node, kw: SymKeyword | undefined, scope: Scop
   const m = parse(expr);
   switch (name) {
     case 'factor': return factorPoly(S(m), names);
+    case 'parfrac': return partialFractions(m, args[0], names);
     case 'coeffs': {
       const x = varSym(args[0], 'coeffs');
       const cs = polyCoeffs(m, x);
@@ -503,7 +732,11 @@ export function symbolicEval(expr: Node, kw: SymKeyword | undefined, scope: Scop
         d = D(d, x);
       }
       if (!terms.length) return { k: 'num', v: 0 };
-      return terms.reduce((acc, t) => (t.k === 'un' && t.op === 'neg' ? { k: 'bin', op: '-', a: acc, b: t.a } : { k: 'bin', op: '+', a: acc, b: t }));
+      return terms.reduce((acc, t) => {
+    if (t.k === 'un' && t.op === 'neg') return { k: 'bin', op: '-', a: acc, b: t.a };
+    if (t.k === 'bin' && t.op === '/' && t.a.k === 'un' && t.a.op === 'neg') return { k: 'bin', op: '-', a: acc, b: { ...t, a: t.a.a } };
+    return { k: 'bin', op: '+', a: acc, b: t };
+  });
     }
     case 'expand': {
       let out: MathNode;
@@ -522,6 +755,8 @@ export function symbolicEval(expr: Node, kw: SymKeyword | undefined, scope: Scop
       return fromMath(roundDigits(out, digits), names);
     }
     default:
+      // closed-form sums: factored like Mathcad, n·(n + 1)/2
+      if (expr.k === 'iter') { try { return factorPoly(S(m), names); } catch { /* not factorable */ } }
       return fromMath(S(m), names);
   }
 }
