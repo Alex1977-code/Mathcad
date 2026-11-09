@@ -637,18 +637,32 @@ export const LAZY_BUILTINS: Record<string, Lazy> = {
       const { f } = ev.numericFn(args[0], v, scope, a);
       const ta = isUnit(a) ? (a as Unit).value as number : toNumber(a);
       const tb = isUnit(b) ? (b as Unit).value as number : toNumber(b);
-      return withUnit(brent(f, ta, tb), a);
+      const x = brent(f, ta, tb);
+      checkRoot(f, x, [ta, tb]);
+      return withUnit(x, a);
     }
     const guess = scope.get(v);
     if (guess === undefined) throw new CalcError(`root: Schätzwert für ${v} muss vorher definiert sein`, v);
     const { f } = ev.numericFn(args[0], v, scope, guess);
     const t0 = isUnit(guess) ? (guess as Unit).value as number : toNumber(guess);
-    return withUnit(rootFromGuess(f, t0), guess);
+    const x = rootFromGuess(f, t0);
+    checkRoot(f, x, [t0]);
+    return withUnit(x, guess);
   },
   Find: (args, scope, ev) => solveBlock(args, scope, ev, false),
   find: (args, scope, ev) => solveBlock(args, scope, ev, false),
   Minerr: (args, scope, ev) => solveBlock(args, scope, ev, true),
 };
+
+/** Accept a root only if |f(x)| is really small (rejects poles and jumps). */
+function checkRoot(f: (x: number) => number, x: number, ref: number[]) {
+  const fx = Math.abs(f(x));
+  let s = 0;
+  for (const t of ref) { const v = Math.abs(f(t)); if (isFinite(v)) s = Math.max(s, v); }
+  if (!(fx <= 1e-3 * Math.min(1, s) + 1e-7 * s) && !(fx <= 1e-12)) {
+    throw new CalcError('root: keine Nullstelle gefunden (Polstelle oder Sprung?) – Schätzwert/Intervall ändern');
+  }
+}
 
 function withUnit(t: number, tmpl: Val): Val {
   if (isUnit(tmpl)) return withValue(tmpl as Unit, t);
@@ -669,42 +683,124 @@ function solveBlock(args: Node[], outer: Scope, ev: Evaluator, allowResidual: bo
     return g;
   });
   const x0 = guesses.map(g => (isUnit(g) ? (g as Unit).value as number : toNumber(g)));
-  let scales: number[] | null = null;
-  const residuals = (x: number[]): number[] => {
-    const out: number[] = [];
-    const first = scales === null;
-    if (first) scales = [];
-    let ci = -1;
+  const num = (v: Val) => (isUnit(v) ? (v as Unit).value as number : toNumber(v));
+  /** Raw residual of every constraint: kind, difference a−b and magnitude max(|a|,|b|). */
+  const raw = (x: number[]) => {
+    const out: { op: string; d: number; m: number }[] = [];
     for (const c of ev.constraints) {
-      ci++;
       const local = new Scope(scope);
       names.forEach((n, i) => local.set(n, withUnit(x[i], guesses[i])));
       const node = c.node.k === 'paren' ? c.node.a : c.node;
       if (node.k !== 'bin') continue;
+      if (!['==', '<', '<=', '>', '>='].includes(node.op)) continue;
       const a = ev.eval(node.a, local), b = ev.eval(node.b, local);
-      const d = ev.binary('-', a, b);
-      const dn = isUnit(d) ? (d as Unit).value as number : toNumber(d);
-      // scale residuals by the magnitude at the initial guess (keeps units of any size comparable)
-      if (first) {
-        const sc = Math.max(Math.abs(isUnit(a) ? (a as Unit).value as number : toNumber(a)), Math.abs(isUnit(b) ? (b as Unit).value as number : toNumber(b)));
-        scales!.push(sc > 0 && isFinite(sc) ? sc : 1);
-      }
-      const scale = scales![ci] ?? 1;
-      switch (node.op) {
-        case '==': out.push(dn / scale); break;
-        case '<': case '<=': out.push(Math.max(0, dn) / scale); break;
-        case '>': case '>=': out.push(Math.min(0, dn) / scale); break;
-        default: break;
-      }
+      out.push({ op: node.op, d: num(ev.binary('-', a, b)), m: Math.max(Math.abs(num(a)), Math.abs(num(b))) });
     }
     return out;
   };
+  const viol = (r: { op: string; d: number }) =>
+    r.op === '==' ? r.d : r.op === '<' || r.op === '<=' ? Math.max(0, r.d) : Math.min(0, r.d);
+  // residual scaling: magnitude at the guess for Find (units of any size), none for Minerr (plain least squares)
+  const r0 = raw(x0);
+  const scales = r0.map(r => (allowResidual ? 1 : (r.m > 0 && isFinite(r.m) ? r.m : 1)));
+  const residuals = (eqOnly: boolean) => (x: number[]): number[] => {
+    const rs = raw(x);
+    const out: number[] = [];
+    rs.forEach((r, i) => { if (!eqOnly || r.op === '==') out.push(viol(r) / scales[i]); });
+    return out;
+  };
+  /** Mathcad's constraint tolerance CTOL = 10⁻³, relative for large magnitudes. */
+  const satisfied = (x: number[]) => raw(x).every((r, i) => {
+    const v = Math.abs(viol(r));
+    // magnitude: at the solution, but at least 10⁻³ of the magnitude at the guess (equations like f(x) = 0)
+    const ref = r0[i] && r0[i].m > 0 && isFinite(r0[i].m) ? r0[i].m : 1;
+    const m = Math.max(r.m, 1e-3 * ref);
+    return isFinite(v) && v <= 1e-3 * Math.min(1, m) + 1e-6 * m + 1e-12;
+  });
+  /**
+   * Residual left by numerical noise (e.g. nested integrals): a Newton step from x would move it only
+   * negligibly. At a false solution (local minimum of the residual) the Jacobian is nearly singular and the
+   * Newton step is large.
+   */
+  const converged = (x: number[]) => {
+    const rs = raw(x);
+    const eqs = rs.map((r, i) => i).filter(i => rs[i].op === '==');
+    if (rs.some(r => r.op !== '==' && Math.abs(viol(r)) > 0)) return false;
+    const r = eqs.map(i => rs[i].d);
+    if (!r.every(isFinite)) return false;
+    if (Math.hypot(...eqs.map(i => r[eqs.indexOf(i)] / scales[i])) > 1e-4) return false;
+    const n = x.length;
+    const J: number[][] = r.map(() => new Array(n).fill(0));
+    const hs = x.map((v, j) => 1e-6 * Math.max(Math.abs(v), Math.abs(x0[j])) || 1e-9);
+    const big = x.map((v, j) => Math.max(Math.abs(v), Math.abs(x0[j])));
+    for (let j = 0; j < n; j++) {
+      // a variable that is (almost) 0 needs a larger step than its own magnitude
+      for (let tries = 0; tries < 6; tries++) {
+        const xp = x.slice(); xp[j] += hs[j];
+        const rp = raw(xp);
+        eqs.forEach((i, k) => { J[k][j] = (rp[i].d - r[k]) / hs[j]; });
+        if (J.some(row => row[j] !== 0)) break;
+        hs[j] = Math.max(hs[j] * 1e3, 1e-12);
+      }
+    }
+    // least squares step (JᵀJ) δ = Jᵀ r
+    const A = Array.from({ length: n }, (_, a) => Array.from({ length: n }, (_, b) => J.reduce((s, row) => s + row[a] * row[b], 0)));
+    const g = Array.from({ length: n }, (_, a) => J.reduce((s, row, k) => s + row[a] * r[k], 0));
+    for (let c = 0; c < n; c++) {
+      let piv = c;
+      for (let q = c + 1; q < n; q++) if (Math.abs(A[q][c]) > Math.abs(A[piv][c])) piv = q;
+      if (!(Math.abs(A[piv][c]) > 0)) return false;
+      [A[c], A[piv]] = [A[piv], A[c]]; [g[c], g[piv]] = [g[piv], g[c]];
+      for (let q = c + 1; q < n; q++) {
+        const f = A[q][c] / A[c][c];
+        for (let w = c; w < n; w++) A[q][w] -= f * A[c][w];
+        g[q] -= f * g[c];
+      }
+    }
+    const d = new Array(n).fill(0);
+    for (let c = n - 1; c >= 0; c--) {
+      let t = g[c];
+      for (let w = c + 1; w < n; w++) t -= A[c][w] * d[w];
+      d[c] = t / A[c][c];
+    }
+    // the remaining residual must be explained by the linear model as well (not a minimum of |r|)
+    const lin = J.map((row, k) => r[k] - row.reduce((s, v, j) => s + v * d[j], 0));
+    if (Math.hypot(...lin) > 1e-3 * Math.hypot(...r)) return false;
+    // step small compared with the variable (or with the finite-difference step for a variable at 0)
+    return d.every((v, j) => isFinite(v) && Math.abs(v) <= 1e-6 * big[j] + 1e-3 * hs[j]);
+  };
   ev.inSolver++;
-  let sol: { x: number[]; residual: number };
-  try { sol = solveSystem(residuals, x0); } finally { ev.inSolver--; }
-  const { x, residual } = sol;
-  // Mathcad's constraint tolerance CTOL is 10⁻³; residuals are relative to the magnitude at the guess
-  if (!allowResidual && residual > 1e-4) throw new CalcError('Find: keine Lösung gefunden – Schätzwerte ändern');
+  let x: number[] = x0;
+  let ok = false;
+  try {
+    const attempt = (start: number[], eqOnly: boolean) => {
+      try { return solveSystem(residuals(eqOnly), start).x; } catch (e) { if (e instanceof CalcError) throw e; return null; }
+    };
+    const starts = [x0];
+    starts.push(x0.map(v => -v), x0.map(v => v + 1), x0.map(v => -v - 1), x0.map(v => 2 * v + 1), x0.map(v => -2 * v - 1));
+    if (allowResidual) {
+      x = attempt(x0, false) ?? x0;
+      ok = true;
+    } else {
+      const hasIneq = r0.some(r => r.op !== '==');
+      outer: for (const eqOnly of [false, true]) {
+        // second pass: equations only (inequalities checked afterwards) from several starting points
+        for (const st of eqOnly ? (hasIneq ? starts : starts.slice(1)) : [x0]) {
+          const cand = attempt(st, eqOnly);
+          if (cand && (satisfied(cand) || converged(cand))) { x = cand; ok = true; break outer; }
+        }
+      }
+      // one unknown, one equation: secant/bracket search as for root()
+      if (!ok && names.length === 1 && r0.filter(r => r.op === '==').length === 1) {
+        const k = r0.findIndex(r => r.op === '==');
+        try {
+          const t = rootFromGuess(v => raw([v])[k].d, x0[0]);
+          if (satisfied([t])) { x = [t]; ok = true; }
+        } catch (e) { if (!(e instanceof CalcError)) throw e; }
+      }
+    }
+  } finally { ev.inSolver--; }
+  if (!ok) throw new CalcError('Find: keine Lösung gefunden – Schätzwerte oder Bedingungen prüfen');
   const vals = x.map((t, i) => withUnit(t, guesses[i]));
   return vals.length === 1 ? vals[0] : column(vals);
 }

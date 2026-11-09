@@ -523,7 +523,9 @@ export class Evaluator {
   }
 
   callFn(f: FnVal, args: Val[], vec = false): Val {
-    if (f.builtin) return this.simplify(f.builtin(args, this));
+    if (f.builtin) {
+      try { return this.simplify(f.builtin(args, this)); } catch (e) { throw translateError(e); }
+    }
     if (args.length !== f.params.length) {
       throw new CalcError(`${f.name} erwartet ${f.params.length} Argument${f.params.length === 1 ? '' : 'e'}, erhalten: ${args.length}`, f.name);
     }
@@ -532,7 +534,7 @@ export class Evaluator {
       return math.map(shapeSrc, (_x: unknown, idx: number[]) =>
         this.callFn(f, args.map(a => (isMatrix(a) ? (a as Matrix).get(idx) : a)), false) as never) as Matrix;
     }
-    if (this.depth > 3000) throw new CalcError('Rekursion zu tief');
+    if (this.depth >= MAX_DEPTH) throw new CalcError(`Rekursion zu tief (mehr als ${MAX_DEPTH} Ebenen)`);
     const local = new Scope(f.scope);
     f.params.forEach((p, i) => local.set(p, args[i]));
     this.depth++;
@@ -705,7 +707,8 @@ export class Evaluator {
             if (r.flow !== 'normal') return r;
             if (r.value !== undefined) last = r.value;
           } catch (e) {
-            if (!(e instanceof CalcError)) throw e;
+            // every calculation error (also from built-in functions or a too deep recursion) is caught
+            if (!(e instanceof Error)) throw e;
             const r = this.execBlock(s.onError, scope);
             if (r.flow !== 'normal') return r;
             if (r.value !== undefined) last = r.value;
@@ -767,7 +770,11 @@ export function unitTemplate(u: Unit): Unit {
   return t;
 }
 
+/** Maximum depth of user function calls (below the JavaScript stack limit, so the result is deterministic). */
+const MAX_DEPTH = 300;
+
 const ERROR_MAP: [RegExp, string][] = [
+  [/Maximum call stack|too much recursion/i, `Rekursion oder Ausdruck zu tief verschachtelt`],
   [/Units do not match/i, 'Einheiten passen nicht zusammen'],
   [/Unit .* not found/i, 'Unbekannte Einheit'],
   [/Dimension mismatch/i, 'Dimensionen passen nicht zusammen'],

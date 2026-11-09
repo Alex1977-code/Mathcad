@@ -9,7 +9,7 @@ import {
   CalcError, Scope, isFn, isMatrix, isRange, isUnit, isComplex, rangeValues, makeMatrix, toNumber,
   type FnVal, type RangeVal, type Val,
 } from './values';
-import { formatValue, formatReal, type FormatOptions, siUnitFactors, unitFactorsText } from './format';
+import { escapeText, formatValue, formatReal, type FormatOptions, siUnitFactors, unitFactorsText } from './format';
 import { stmtLatex, toLatex, type LatexCtx } from './latex';
 import { sortRegions, type MathRegion, type PlotRegion, type Region, type Worksheet } from './model';
 import { checkResult, expectedToText, type CheckStatus } from './verify';
@@ -194,7 +194,7 @@ export class WorksheetEngine {
       // a guess may depend on arguments of a solver function: not an error at this point
       if (res.error) { res.error = undefined; res.latex = stmtLatex(p, this.latexCtx(this.top)); }
     }
-    if (this.inSolve && usesFind(p)) { res.solve = 'find'; this.inSolve = false; }
+    if (this.inSolve && usesFind(p)) { res.solve = 'find'; this.inSolve = false; this.ev.constraints = []; }
     if (p.kind === 'define' && !res.error) this.definedBy.set(p.target.name, r.id);
     return res;
   }
@@ -336,7 +336,13 @@ export class WorksheetEngine {
       const err = translateError(e) as CalcError;
       res.error = { message: err.message, culprit: (err as CalcError).culprit, kind: 'calc' };
     }
-    res.latex = stmtLatex(p, this.latexCtx(scope, res.error?.culprit));
+    try {
+      res.latex = stmtLatex(p, this.latexCtx(scope, res.error?.culprit));
+    } catch {
+      // extremely long/deep expressions: show the source text instead of crashing the whole sheet
+      res.latex = `\\text{${escapeText(r.src.slice(0, 200))}${r.src.length > 200 ? '…' : ''}}`;
+      res.error ??= { message: 'Ausdruck zu tief verschachtelt', kind: 'calc' };
+    }
     const exp = r.imported?.expected;
     if (usesIterative(p, this.iterativeVars) && p.kind === 'define') for (const n of definedNames(p)) this.iterativeVars.add(n);
     const random = usesRandom(p) || refsAny(p, this.randomVars);
@@ -616,7 +622,8 @@ export class ComputeSession {
     let p = this.parseCache.get(r.src);
     if (!p) {
       try { p = parseMathRegion(r.src); } catch (e) {
-        p = e instanceof ParseError ? e : new ParseError(String((e as Error).message ?? e), 0);
+        const msg = String((e as Error).message ?? e);
+        p = e instanceof ParseError ? e : new ParseError(/call stack|recursion/i.test(msg) ? 'Ausdruck zu tief verschachtelt' : msg, 0);
       }
       if (this.parseCache.size > 20000) this.parseCache.clear();
       this.parseCache.set(r.src, p);
@@ -629,7 +636,11 @@ export class ComputeSession {
     const order = sortRegions(ws.regions);
     const sigs = order.map(signature);
     const ids = order.map(r => r.id);
-    const globals = order.filter(r => r.type === 'math' && !r.disabled && r.src.includes('≡')).map(signature).join('\n');
+    const globals = order.filter(r => {
+      if (r.type !== 'math' || r.disabled) return false;
+      const p = this.parse(r);
+      return !(p instanceof ParseError) && p.kind === 'define' && p.global;
+    }).map(signature).join('\n');
     const keys = JSON.stringify(ws.settings) + '\u0000' + globals;
 
     // first region that differs from the previous run

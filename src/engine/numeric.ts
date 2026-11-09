@@ -140,6 +140,7 @@ export function brent(f: (x: number) => number, a: number, b: number, tol = 1e-1
 
 /** Root from a guess: secant iterations, falling back to bracket search + Brent. */
 export function rootFromGuess(f: (x: number) => number, x0: number, tol = 1e-12): number {
+  const g = x0;
   let x1 = x0 === 0 ? 1e-4 : x0 * (1 + 1e-4);
   let f0 = f(x0), f1 = f(x1);
   for (let i = 0; i < 100; i++) {
@@ -149,11 +150,12 @@ export function rootFromGuess(f: (x: number) => number, x0: number, tol = 1e-12)
     if (den === 0) break;
     const x2 = x1 - f1 * (x1 - x0) / den;
     if (!isFinite(x2)) break;
+    // a nearly flat secant throws the iterate far away – rather search a bracket near the guess
+    if (Math.abs(x2 - g) > 1e3 * Math.max(1, Math.abs(g))) break;
     x0 = x1; f0 = f1; x1 = x2; f1 = f(x1);
     if (Math.abs(x1 - x0) <= tol * Math.max(1, Math.abs(x1)) && Math.abs(f1) < 1e-6 * (1 + Math.abs(f0))) return x1;
   }
   // bracket search around the original guess
-  const g = x0;
   let step = Math.max(Math.abs(g) * 0.1, 0.1);
   for (let i = 0; i < 60; i++) {
     for (const [a, b] of [[g, g + step], [g - step, g]]) {

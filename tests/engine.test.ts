@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { parseMathRegion, parseExpression } from '../src/engine/parser';
 import { stmtToText } from '../src/engine/serialize';
 import { computeWorksheet, type RegionResult } from '../src/engine/worksheet';
-import { emptyWorksheet, type Worksheet } from '../src/engine/model';
+import { emptyWorksheet, sortRegions, type Worksheet } from '../src/engine/model';
 import { formatReal } from '../src/engine/format';
 import { stmtLatex } from '../src/engine/latex';
 import katex from 'katex';
@@ -424,5 +424,51 @@ describe('Befunde der Testagenten: Einheiten', () => {
     expect(last(['1 Gy = J/kg'])).toBe('1');
     expect(last(['1 inHg = Pa'])).toBe('3386.389');
     expect(last(['5 Δ°C = K'])).toBe('5');
+  });
+});
+
+describe('Befunde der Testagenten: Solver & Programme', () => {
+  it('Find meldet unlösbare Systeme', () => {
+    expect(last(['x := 1000', 'Given', 'x^2 + 50 == 0', 'Find(x) ='])).toMatch(/keine Lösung/);
+    expect(last(['x := 100', 'y := 100', 'Given', 'x^2+y^2 == -1', 'x == y', 'Find(x, y) ='])).toMatch(/keine Lösung/);
+  });
+  it('Find mit erfüllbarer Ungleichung und schwierigem Startwert', () => {
+    expect(last(['x := -1', 'Given', 'x^3 - x == 6', 'x > 0', 'Find(x) ='])).toBe('2');
+    expect(last(['x := 1', 'Given', 'x^2 == 4', 'x < 0', 'Find(x) ='])).toBe('-2');
+    expect(last(['x := 1', 'Given', 'exp(x) == 1e10', 'Find(x) ='])).toBe('23.026');
+  });
+  it('Minerr ist ungewichtet und unabhängig vom Schätzwert', () => {
+    expect(last(['a := 1', 'b := 1', 'Given', 'a+b == 3', 'a-b == 1', 'a == 2.5', 'Minerr(a, b) ='])).toBe('[2.167; 1]');
+    expect(last(['a := 10', 'b := 10', 'Given', 'a+b == 3', 'a-b == 1', 'a == 2.5', 'Minerr(a, b) ='])).toBe('[2.167; 1]');
+  });
+  it('Find ohne neues Given', () => {
+    expect(last(['x := 1', 'Given', 'x^2 == 9', 'a := Find(x)', 'x^2 == 16', 'Find(x) ='])).toMatch(/keine Bedingungen/);
+  });
+  it('root lehnt Polstellen und Sprünge ab und bleibt nahe am Schätzwert', () => {
+    expect(last(['x := 3', 'root(1/(x-2), x) ='])).toMatch(/keine Nullstelle/);
+    expect(last(['root(tan(x), x, 1, 2) ='])).toMatch(/keine Nullstelle/);
+    expect(last(['root(floor(x) - 0.5, x, 0, 2) ='])).toMatch(/keine Nullstelle/);
+    expect(last(['x := 0', 'root(cos(x), x) ='])).toBe('1.571');
+  });
+  it('try fängt alle Fehler, Rekursionsgrenze ist deterministisch', () => {
+    expect(last(['s(n) := if(n <= 0, 0, n + s(n-1))', 't(n) :=\n  try\n    s(n)\n  on error\n    -1', 't(100000) ='])).toBe('-1');
+    expect(last(['h(g,x) :=\n  try\n    g(x)\n  on error\n    -1', 'h(eigenvals, [1,2,3]) ='])).toBe('-1');
+    expect(last(['f(n) := if(n < 1, 0, f(n - 1) + 1)', 'f(600) ='])).toMatch(/Rekursion zu tief/);
+    expect(last(['f(n) := if(n < 1, 0, f(n - 1) + 1)', 'f(250) ='])).toBe('250');
+  });
+  it('sehr lange Formel bringt das Blatt nicht zum Absturz', () => {
+    expect(last(['y := ' + Array(4000).fill('1').join('+') + ' =', 'z := 2 ='])).toBe('2');
+  });
+});
+
+describe('Befunde der Testagenten: Reihenfolge', () => {
+  it('Reihenfolge bei fast gleicher Höhe unabhängig von der Speicherreihenfolge', () => {
+    const regs = [
+      { id: 'a', type: 'math' as const, x: 0, y: 0.8, src: 'a := 1' },
+      { id: 'b', type: 'math' as const, x: 100, y: 0.4, src: 'a := a*10+2' },
+      { id: 'c', type: 'math' as const, x: 200, y: 0, src: 'a := a*10+3' },
+    ];
+    const orders = [[0, 1, 2], [2, 1, 0], [1, 2, 0], [2, 0, 1]].map(o => sortRegions(o.map(i => regs[i])).map(r => r.id).join(''));
+    expect(new Set(orders).size).toBe(1);
   });
 });

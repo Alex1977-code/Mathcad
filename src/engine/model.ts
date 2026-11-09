@@ -96,6 +96,17 @@ export function emptyWorksheet(title = 'Unbenannt'): Worksheet {
 
 /** Mathcad evaluation order: top to bottom, then left to right. */
 export function sortRegions<T extends RegionBase>(regions: T[]): T[] {
-  const key = (r: RegionBase) => r.y + (r.oy ?? 0);
-  return regions.slice().sort((a, b) => (Math.abs(key(a) - key(b)) < 0.5 ? a.x - b.x : key(a) - key(b)));
+  const fin = (v: number) => (Number.isFinite(v) ? v : 0);
+  const key = (r: RegionBase) => fin(r.y + (r.oy ?? 0));
+  // sort by height, then group regions on (almost) the same line and order each line from left to right;
+  // grouping against the first region of a line keeps the order independent of the input order
+  const byY = regions.slice().sort((a, b) => key(a) - key(b) || fin(a.x) - fin(b.x));
+  const out: T[] = [];
+  for (let i = 0; i < byY.length;) {
+    let j = i + 1;
+    while (j < byY.length && key(byY[j]) - key(byY[i]) < 0.5) j++;
+    out.push(...byY.slice(i, j).sort((a, b) => fin(a.x) - fin(b.x) || key(a) - key(b)));
+    i = j;
+  }
+  return out;
 }
