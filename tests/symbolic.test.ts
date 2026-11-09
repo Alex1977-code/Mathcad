@@ -141,4 +141,19 @@ describe('Symbolische Auswertung →', () => {
       expect(chk[2].resultText, `${f} → ${pf}`).toBe('1');
     }
   });
+
+  it('Partialbruchzerlegung mit Buchstaben', () => {
+    expect(sym(['1/((x - a)*(x - b)) → parfrac, x'])).toBe('1/((a - b)*(x - a)) + 1/((b - a)*(x - b))');
+    expect(sym(['1/(x^2 - a^2) → parfrac, x'])).toBe('1/(2*a*(x - a)) - 1/(2*a*(x + a))');
+    expect(sym(['1/(x^2 - a^2) → parfrac'])).toBe('1/(2*a*(x - a)) - 1/(2*a*(x + a))');   // x is taken as the variable
+    expect(sym(['1/(x^2 + a) → parfrac, x'])).toMatch(/Nenner bitte faktorisiert/);
+    // each decomposition equals the original function for numbers in place of the letters
+    for (const f of ['1/((x - a)*(x - b))', '(x + c)/(x^2*(x - a))', '1/((x - a)^2*(x + a))', '1/((x - a)*(x^2 + b^2))',
+      'x^3/((x - a)*(x - b))', '1/(x^2 - (a + b)*x + a*b)', '(2*x + c)/((x - (a + 1))*(x + b)^2)']) {
+      const pf = run([`${f} → parfrac, x`])[0];
+      expect(pf.error?.message, f).toBeUndefined();
+      const chk = run(['a := 1.7', 'b := 0.6', 'c := 2.3', `F(x) := ${f}`, `G(x) := ${pf.resultText}`, 'abs(F(0.37) - G(0.37)) + abs(F(5.3) - G(5.3)) + abs(F(-2.9) - G(-2.9)) < 1e-9 =']);
+      expect(chk[5].resultText, `${f} → ${pf.resultText}`).toBe('1');
+    }
+  });
 });

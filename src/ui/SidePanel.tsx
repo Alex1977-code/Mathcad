@@ -179,6 +179,7 @@ const HELP: [string, string][] = [
   ['sum(i^2, i, 1, n) →', 'Summe in geschlossener Form'],
   ['lim(sin(x)/x, x, 0) →', 'Grenzwert (auch ∞, "right"/"left", auch mit =)'],
   ['1/(x^2 - 1) → parfrac', 'Partialbruchzerlegung'],
+  ['1/((x-a)*(x-b)) → parfrac, x', 'auch mit Buchstaben'],
   ['F_max', 'Index im Namen (Unterstrich)'],
   ['v[2]  A[1, 0]', 'Vektor-/Matrixelement (ORIGIN 0)'],
   ['[1, 2; 3, 4]', 'Matrix (, Spalten · ; Zeilen)'],

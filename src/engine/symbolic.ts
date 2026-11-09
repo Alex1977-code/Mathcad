@@ -590,11 +590,19 @@ function partialFractions(m: MathNode, xArg: Node | undefined, names: Names): No
   else {
     const syms = new Set<string>();
     m.traverse((n, path) => { const s = symName(n); if (s && path !== 'fn' && names.name(s)) syms.add(s); });
-    if (syms.size !== 1) throw new CalcError('parfrac braucht die Variable:  → parfrac, x');
-    x = [...syms][0];
+    // several letters: x is the variable if it occurs, otherwise it must be named
+    const sx = [...syms].find(q => names.name(q) === 'x');
+    if (syms.size !== 1 && !sx) throw new CalcError('parfrac braucht die Variable:  → parfrac, x');
+    x = syms.size === 1 ? [...syms][0] : sx!;
   }
   let nd: { numerator: MathNode; denominator: MathNode };
   try { nd = math.rationalize(m, {}, true) as unknown as { numerator: MathNode; denominator: MathNode }; } catch { throw new CalcError('parfrac: nur gebrochen rationale Funktionen'); }
+  {
+    const Nc = polyCoeffs(nd.numerator, x), Qc = nd.denominator ? polyCoeffs(nd.denominator, x) : [new math.ConstantNode(1) as MathNode];
+    if (!Nc || !Qc) throw new CalcError('parfrac: nur gebrochen rationale Funktionen in dieser Variablen');
+    // letters in the coefficients: symbolic decomposition
+    if ([...Nc, ...Qc].some(c => constVal(c) === undefined)) return partialFractionsSym(m, x, Nc, Qc, names);
+  }
   const coeffs = (p: MathNode | null) => { const cs = p ? polyCoeffs(p, x) : [new math.ConstantNode(1)]; const v = cs?.map(constVal); if (!v || v.some(q => q === undefined)) throw new CalcError('parfrac: nur Zahlenkoeffizienten'); return v as number[]; };
   let num = coeffs(nd.numerator);
   const den = coeffs(nd.denominator ?? null);
@@ -651,6 +659,191 @@ function partialFractions(m: MathNode, xArg: Node | undefined, names: Names): No
     if (t.k === 'bin' && t.op === '/' && t.a.k === 'un' && t.a.op === 'neg') return { k: 'bin', op: '-', a: acc, b: { ...t, a: t.a.a } };
     return { k: 'bin', op: '+', a: acc, b: t };
   });
+}
+
+/* --------------------- partial fractions with letters --------------------- */
+
+/** Polynomial with expression coefficients c0 + c1·x + … as mathjs text. */
+const polyText = (c: MathNode[], x: string) => c.map((q, i) => `${str(q)} * ${x}^${i}`).join(' + ') || '0';
+
+/** Free symbols of a tree (without function names and constants). */
+function freeSyms(m: MathNode): string[] {
+  const out = new Set<string>();
+  m.traverse((n, path) => { const s = symName(n); if (s && path !== 'fn' && !['pi', 'e', 'i', 'Infinity'].includes(s)) out.add(s); });
+  return [...out];
+}
+
+/** Zero test by evaluation at random values of all letters (robust where simplify cannot decide). */
+function isZeroNumeric(m: MathNode, syms: string[]): boolean {
+  const code = m.compile();
+  for (let t = 0; t < 3; t++) {
+    const sc: Record<string, number> = {};
+    syms.forEach((q, k) => { sc[q] = 0.3141 + 0.7071 * ((k * 7 + t * 13) % 11) + 0.1 * t; });
+    let v: unknown;
+    try { v = code.evaluate(sc); } catch { return false; }
+    if (typeof v !== 'number' || !Number.isFinite(v) || Math.abs(v) > 1e-9) return false;
+  }
+  return true;
+}
+
+/** Monomial  c · Π s^k  (c an integer) or null. */
+function monomial(m: MathNode): { c: number; pows: Map<string, number> } | null {
+  const node = m as MNode;
+  if (m.type === 'ConstantNode') { const v = node.value as number; return Number.isInteger(v) ? { c: v, pows: new Map() } : null; }
+  if (m.type === 'SymbolNode') return { c: 1, pows: new Map([[node.name as string, 1]]) };
+  if (m.type === 'ParenthesisNode') return monomial(node.content as MathNode);
+  if (m.type !== 'OperatorNode') return null;
+  const args = node.args as MathNode[];
+  if (node.fn === 'unaryMinus') { const r = monomial(args[0]); return r && { c: -r.c, pows: r.pows }; }
+  if (node.fn === 'pow') {
+    const b = monomial(args[0]), k = constVal(args[1]);
+    if (!b || k === undefined || !Number.isInteger(k) || k < 0 || k > 8) return null;
+    return { c: b.c ** k, pows: new Map([...b.pows].map(([q, e]) => [q, e * k])) };
+  }
+  if (node.fn === 'multiply') {
+    let c = 1; const pows = new Map<string, number>();
+    for (const a of args) { const r = monomial(a); if (!r) return null; c *= r.c; for (const [q, e] of r.pows) pows.set(q, (pows.get(q) ?? 0) + e); }
+    return { c, pows };
+  }
+  return null;
+}
+
+/** All monomial divisors of a monomial, as mathjs text (limited). */
+function monomialDivisors(mo: { c: number; pows: Map<string, number> }): string[] {
+  const nums: number[] = [];
+  const ac = Math.abs(mo.c);
+  for (let d = 1; d <= Math.min(ac, 200); d++) if (ac % d === 0) nums.push(d);
+  let parts: string[] = nums.map(String);
+  for (const [q, e] of mo.pows) {
+    const next: string[] = [];
+    for (const p of parts) for (let k = 0; k <= e; k++) next.push(k === 0 ? p : `${p} * ${q}^${k}`);
+    parts = next;
+    if (parts.length > 400) break;
+  }
+  return parts;
+}
+
+/** Synthetic division by (x − r), coefficients as expressions. */
+function deflate(c: MathNode[], r: MathNode): MathNode[] {
+  const out: MathNode[] = new Array(c.length - 1);
+  let carry: MathNode = new math.ConstantNode(0);
+  for (let i = c.length - 1; i >= 1; i--) { carry = S(P(`${str(c[i])} + ${str(carry)} * ${str(r)}`)); out[i - 1] = carry; }
+  return out;
+}
+
+/**
+ * Partial fractions with letters in the coefficients. Roots of the denominator are searched among the
+ * linear factors written in the expression and the divisors of the constant term (both checked by
+ * evaluation); coefficients follow from  A_{m−j} = g^{(j)}(r) / j!  with  g = N / (Q / (x − r)^m).
+ */
+function partialFractionsSym(m: MathNode, x: string, Nc0: MathNode[], Qc0: MathNode[], names: Names): Node {
+  const syms = [...new Set([...freeSyms(m), x])];
+  // polynomial part (long division with expression coefficients)
+  const Nc = Nc0.slice(), Qc = Qc0;
+  const lead = Qc[Qc.length - 1];
+  const quot: MathNode[] = [];
+  for (let k = Nc.length - Qc.length; k >= 0; k--) {
+    const q = S(P(`${str(Nc[k + Qc.length - 1])} / ${str(lead)}`));
+    quot[k] = q;
+    for (let j = 0; j < Qc.length; j++) Nc[k + j] = S(P(`${str(Nc[k + j])} - ${str(q)} * ${str(Qc[j])}`));
+  }
+  const rem = Nc.slice(0, Qc.length - 1);
+  // candidate roots
+  const cands: string[] = [];
+  m.traverse(n => {
+    if (!hasSym(n, x) || n.type === 'SymbolNode') return;
+    const p = linearSlope(n, x);
+    if (p) cands.push(`-(${str(S(subst(n, x, new math.ConstantNode(0))))}) / ${str(p)}`);
+  });
+  const c0 = monomial(S(Qc[0])), cl = monomial(S(lead));
+  if (c0 && cl) for (const a of monomialDivisors(c0)) for (const b of monomialDivisors(cl)) { cands.push(`(${a}) / (${b})`, `-(${a}) / (${b})`); if (cands.length > 3000) break; }
+  // roots with multiplicity by deflation
+  let rest = Qc.slice();
+  const roots: { r: MathNode; m: number }[] = [];
+  const isRoot = (c: MathNode[], r: MathNode) => isZeroNumeric(S(P(polyText(c, `(${str(r)})`))), syms);
+  for (const t of [`0`, ...cands]) {
+    if (rest.length < 2) break;
+    let r: MathNode;
+    try { r = S(P(t)); } catch { continue; }
+    if (hasSym(r, x) || roots.some(q => isZeroNumeric(S(P(`${str(q.r)} - ${str(r)}`)), syms))) continue;
+    let mult = 0;
+    while (rest.length > 1 && isRoot(rest, r)) { rest = deflate(rest, r); mult++; }
+    if (mult) roots.push({ r, m: mult });
+  }
+  if (!roots.length) throw new CalcError('parfrac: keine Nullstellen des Nenners gefunden – Nenner bitte faktorisiert eingeben, z. B. 1/((x − a)·(x − b))');
+  // terms A / (x − r)^j
+  const remTxt = polyText(rem, x);
+  const restTxt = polyText(rest, x);
+  const terms: { neg: boolean; node: Node }[] = [];
+  const X: Node = { k: 'id', name: names.name(x)! };
+  const factorNode = (r: MathNode, j: number): Node => {
+    const rn = fromMath(r, names);
+    const lin: Node = isZero(r) ? X : rn.k === 'un' && rn.op === 'neg' ? { k: 'paren', a: { k: 'bin', op: '+', a: X, b: rn.a } } : { k: 'paren', a: { k: 'bin', op: '-', a: X, b: rn } };
+    return j === 1 ? lin : { k: 'bin', op: '^', a: lin, b: { k: 'num', v: j } };
+  };
+  /** A / den  with A written as one fraction  p/q  of polynomials in the letters, sign pulled out. */
+  const pushTerm = (A: MathNode, den: Node) => {
+    if (isZeroNumeric(A, syms)) return;
+    let numer: MathNode = A, denom: MathNode | null = null;
+    try {
+      const r = math.rationalize(A, {}, true) as unknown as { numerator: MathNode; denominator: MathNode | null };
+      numer = S(r.numerator); denom = r.denominator ? S(r.denominator) : null;
+    } catch { /* keep as is */ }
+    let neg = false;
+    const nv = constVal(numer);
+    if (nv !== undefined && nv < 0) { neg = true; numer = new math.ConstantNode(-nv); }
+    else if (numer.type === 'OperatorNode' && (numer as MNode).fn === 'unaryMinus') { neg = true; numer = ((numer as MNode).args as MathNode[])[0]; }
+    // numeric fraction in the numerator (1/2 / a  →  1 / (2·a))
+    const nv2 = constVal(numer), fr = nv2 !== undefined && !Number.isInteger(nv2) ? toFraction(nv2) : null;
+    if (fr) { numer = new math.ConstantNode(fr[0]); denom = S(P(`${fr[1]} * ${denom ? str(denom) : '1'}`)); }
+    // cancel common letters:  (a² + c·a) / a³  →  (a + c) / a²
+    const dm = denom ? monomial(S(denom)) : null;
+    if (dm) {
+      let changed = false;
+      for (const [q, e] of dm.pows) {
+        let k = e;
+        while (k > 0) {
+          const cs = polyCoeffs(numer, q);
+          if (!cs || cs.length < 2 || !isZeroNumeric(cs[0], syms)) break;
+          numer = S(P(polyText(cs.slice(1), q)));
+          k--; changed = true;
+        }
+        dm.pows.set(q, k);
+      }
+      if (changed) denom = S(P([String(dm.c), ...[...dm.pows].filter(([, e]) => e > 0).map(([q, e]) => `${q}^${e}`)].join(' * ')));
+    }
+    if (denom && constVal(denom) === 1) denom = null;
+    const dd: Node = denom ? { k: 'bin', op: '*', a: fromMath(denom, names), b: den } : den;
+    terms.push({ neg, node: { k: 'bin', op: '/', a: fromMath(numer, names), b: dd } });
+  };
+  const found: { A: MathNode; r: MathNode; j: number }[] = [];
+  for (const { r, m: mult } of roots) {
+    const others = [...roots.filter(q => q.r !== r).map(q => `(${x} - ${str(q.r)})^${q.m}`), `(${restTxt})`].join(' * ');
+    let g: MathNode = P(`(${remTxt}) / (${others})`);
+    for (let j = 0; j < mult; j++) {
+      const A = S(P(`${str(S(subst(g, x, r)))} / ${fact(j)}`));
+      found.push({ A, r, j: mult - j });
+      pushTerm(A, factorNode(r, mult - j));
+      g = math.derivative(g, x);
+    }
+  }
+  // remaining factor without found roots: B(x)/rest with  B·Π(x − r)^m = rem − Σ A·Q/(x − r)^j
+  if (rest.length > 1) {
+    const prodOthers = (r: MathNode, j: number) => [...roots.map(q => `(${x} - ${str(q.r)})^${q.r === r ? q.m - j : q.m}`), `(${restTxt})`].join(' * ');
+    const Dtxt = `(${remTxt})` + found.map(t => ` - ${str(t.A)} * ${prodOthers(t.r, t.j)}`).join('');
+    let Dc: MathNode[] | null;
+    try { Dc = polyCoeffs(math.rationalize(P(Dtxt)) as MathNode, x); } catch { Dc = null; }
+    if (!Dc) throw new CalcError('parfrac: Restfaktor nicht bestimmbar');
+    for (const { r, m: mult } of roots) for (let k = 0; k < mult; k++) if (Dc.length > 1) Dc = deflate(Dc, r);
+    const lc = rest[rest.length - 1];
+    const restN = rest.map(c => S(P(`${str(c)} / ${str(lc)}`)));
+    pushTerm(S(P(`(${polyText(Dc, x)}) / ${str(lc)}`)), { k: 'paren', a: fromMath(S(P(polyText(restN, x))), names) });
+  }
+  const parts: { neg: boolean; node: Node }[] = [];
+  if (quot.some(q => !isZeroNumeric(q, syms))) parts.push({ neg: false, node: fromMath(S(P(polyText(quot, x))), names) });
+  parts.push(...terms);
+  return parts.slice(1).reduce<Node>((acc, t) => ({ k: 'bin', op: t.neg ? '-' : '+', a: acc, b: t.node }),
+    parts[0].neg ? { k: 'un', op: 'neg', a: parts[0].node } : parts[0].node);
 }
 
 /** Small dense linear solve (partial pivoting). */
