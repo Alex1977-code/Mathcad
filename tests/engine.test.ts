@@ -295,6 +295,17 @@ describe('plots', () => {
     expect(p.error).toBeUndefined();
     expect(p.traces[0].y).toEqual([0, 1, 4, 9, 16, 25, 36, 49, 64, 81, 100]);
     const q = r.results.q.plot!;
+    // axis limits: plain numbers are in display units, quantities are converted
+    const ws2 = emptyWorksheet();
+    ws2.regions = [
+      { id: 'L', type: 'math', x: 0, y: 0, src: 'L := 6 m' },
+      { id: 'p1', type: 'plot', x: 0, y: 20, traces: [{ x: 'x', y: 'x' }], xmin: '-750', xmax: '750', xUnit: 'mm', yUnit: 'mm' },
+      { id: 'p2', type: 'plot', x: 0, y: 400, traces: [{ x: 'x', y: 'x' }], xmin: '0', xmax: 'L', xUnit: 'mm' },
+    ];
+    const r2 = computeWorksheet(ws2);
+    expect(r2.results.p1.plot!.xLim).toEqual([-750, 750]);
+    expect(r2.results.p1.plot!.traces[0].y[0]).toBeCloseTo(-750);
+    expect(r2.results.p2.plot!.xLim[1]).toBeCloseTo(6000);
     expect(q.traces[0].x.length).toBe(401);
     expect(Math.abs(q.traces[0].y[100] - 1)).toBeLessThan(1e-9);
   });

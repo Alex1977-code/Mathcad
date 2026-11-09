@@ -1,7 +1,7 @@
 import type { Matrix, Unit } from 'mathjs';
 import { walk, type MathStmt, type Node } from './ast';
 import { parseMathRegion, parseExpression, ParseError } from './parser';
-import { Evaluator, translateError, unitTemplate } from './evaluator';
+import { Evaluator, translateError } from './evaluator';
 import { CONSTANTS, getRandomState, isBuiltinFunction, resetRandom } from './builtins';
 import { getStatsSeed, setStatsSeed } from './stats';
 import { lookupUnit, math } from './units';
@@ -446,7 +446,8 @@ export class WorksheetEngine {
     const limit = (s: string | undefined, unit: Val | undefined) => {
       if (!s || !s.trim()) return undefined;
       let v = this.ev.eval(parseExpression(s), scope);
-      if (unit !== undefined && (isUnit(v) || isUnit(unit))) v = this.ev.divide(v, unit, false);
+      // a plain number is already in display units; a quantity is converted into them
+      if (unit !== undefined && isUnit(v)) v = this.ev.divide(v, unit, false);
       return isUnit(v) ? (v as Unit).value as number : toNumber(v);
     };
     let xmin: number | undefined, xmax: number | undefined;
@@ -488,7 +489,8 @@ export class WorksheetEngine {
           let firstErr: unknown;
           for (let i = 0; i <= N; i++) {
             const t = a + (b - a) * i / N;
-            local.set(quickVar, xUnitVal && isUnit(xUnitVal) ? math.multiply(t, unitTemplate(xUnitVal as Unit)) as Val : (xUnitVal !== undefined ? this.ev.multiply(t, xUnitVal, false) : t));
+            // t is in display units: x = t · (axis unit)
+            local.set(quickVar, xUnitVal !== undefined ? this.ev.multiply(t, xUnitVal, false) : t);
             try {
               const yv = this.ev.eval(yNode, local);
               xs.push(t); ys.push(scalar(yv, yUnitVal, yd));
