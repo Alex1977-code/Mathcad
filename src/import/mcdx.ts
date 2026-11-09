@@ -3,7 +3,7 @@ import JSZip from 'jszip';
 import { emptyWorksheet, newId, type PlotTrace, type Region, type Worksheet } from '../engine/model';
 import { toText } from '../engine/serialize';
 import { collectDefinedNames, convertExpr, kids, local, child, type ConvertCtx } from './mathml';
-import { bytesToBase64, defaultXmlParser, escapeHtml, imageMime, mathRegionFrom, type XmlParser } from './common';
+import { alignStyle, bytesToBase64, coord, defaultXmlParser, escapeHtml, imageMime, mathRegionFrom, type XmlParser } from './common';
 
 const PALETTE = ['#2563eb', '#dc2626', '#16a34a', '#9333ea', '#ea580c', '#0891b2', '#db2777', '#4b5563'];
 
@@ -29,7 +29,7 @@ export function xamlToHtml(root: Element, baseSize = 14.6666): string {
     const styles: string[] = [];
     if (color && color.toLowerCase() !== '#000000') styles.push(`color:${color}`);
     const fs = parseFloat(e.getAttribute('FontSize') ?? '');
-    if (fs && Math.abs(fs - baseSize) > 1) styles.push(`font-size:${(fs / baseSize).toFixed(2)}em`);
+    if (fs && Math.abs(fs - baseSize) > 1) styles.push(`font-size:${Math.min(Math.max(fs / baseSize, 0.5), 4).toFixed(2)}em`);
     if (styles.length) s = `<span style="${styles.join(';')}">${s}</span>`;
     return s;
   };
@@ -41,8 +41,7 @@ export function xamlToHtml(root: Element, baseSize = 14.6666): string {
     switch (e.localName) {
       case 'Section': case 'FlowDocument': return inner();
       case 'Paragraph': {
-        const align = e.getAttribute('TextAlignment');
-        const st = align && align !== 'Left' ? ` style="text-align:${align.toLowerCase()}"` : '';
+        const st = alignStyle(e.getAttribute('TextAlignment'));
         const body = runStyle(e, inner());
         return `<p${st}>${body || '<br>'}</p>`;
       }
@@ -88,34 +87,40 @@ export async function importMcdx(data: ArrayBuffer | Uint8Array, name: string, p
   // settings
   const calc = zip.file('mathcad/settings/calculation.xml');
   if (calc) {
-    const cdoc = parseXml(strip(await calc.async('string')));
-    const biv = cdoc.getElementsByTagName('builtInVariables')[0];
-    if (biv) ws.settings.origin = parseInt(biv.getAttribute('array-origin') ?? '0', 10) || 0;
+    try {
+      const cdoc = parseXml(strip(await calc.async('string')));
+      const biv = cdoc.getElementsByTagName('builtInVariables')[0];
+      if (biv) ws.settings.origin = parseInt(biv.getAttribute('array-origin') ?? '0', 10) || 0;
+    } catch { warnings.push('Berechnungseinstellungen beschädigt – Standardwerte verwendet'); }
   }
 
   // results
   const results = new Map<string, Element>();
   const resFile = zip.file('mathcad/result.xml');
   if (resFile) {
-    const rdoc = parseXml(strip(await resFile.async('string')));
-    const all = rdoc.getElementsByTagName('*');
-    for (let i = 0; i < all.length; i++) {
-      const e = all[i];
-      if (e.localName === 'resultData') {
-        const r = kids(e).find(c => c.localName === 'result');
-        if (r) results.set(e.getAttribute('result-id') ?? '', r);
+    try {
+      const rdoc = parseXml(strip(await resFile.async('string')));
+      const all = rdoc.getElementsByTagName('*');
+      for (let i = 0; i < all.length; i++) {
+        const e = all[i];
+        if (e.localName === 'resultData') {
+          const r = kids(e).find(c => c.localName === 'result');
+          if (r) results.set(e.getAttribute('result-id') ?? '', r);
+        }
       }
-    }
+    } catch { warnings.push('Gespeicherte Mathcad-Ergebnisse beschädigt – kein Ergebnisabgleich'); }
   }
 
   // relationships (text documents, images)
   const rels = new Map<string, string>();
   const relFile = zip.file('mathcad/_rels/worksheet.xml.rels');
   if (relFile) {
-    const rdoc = parseXml(strip(await relFile.async('string')));
-    for (const r of Array.from(rdoc.getElementsByTagName('*'))) {
-      if (r.localName === 'Relationship') rels.set(r.getAttribute('Id') ?? '', (r.getAttribute('Target') ?? '').replace(/^\//, ''));
-    }
+    try {
+      const rdoc = parseXml(strip(await relFile.async('string')));
+      for (const r of Array.from(rdoc.getElementsByTagName('*'))) {
+        if (r.localName === 'Relationship') rels.set(r.getAttribute('Id') ?? '', (r.getAttribute('Target') ?? '').replace(/^\//, ''));
+      }
+    } catch { warnings.push('Verweise auf Texte/Bilder beschädigt – diese fehlen'); }
   }
   const loadText = async (textEl: Element): Promise<string> => {
     const inline = kids(textEl).find(c => c.localName === 'FlowDocument');
@@ -142,10 +147,10 @@ export async function importMcdx(data: ArrayBuffer | Uint8Array, name: string, p
 
   const regions: Region[] = [];
   const handleRegion = async (reg: Element, ox: number, oy: number) => {
-    const x = ox + parseFloat(reg.getAttribute('left') ?? '0');
-    const y = oy + parseFloat(reg.getAttribute('top') ?? '0');
-    const w = parseFloat(reg.getAttribute('width') ?? reg.getAttribute('actualWidth') ?? '0');
-    const h = parseFloat(reg.getAttribute('height') ?? reg.getAttribute('actualHeight') ?? '0');
+    const x = ox + coord(reg.getAttribute('left'));
+    const y = oy + coord(reg.getAttribute('top'));
+    const w = coord(reg.getAttribute('width') ?? reg.getAttribute('actualWidth'), 1e4);
+    const h = coord(reg.getAttribute('height') ?? reg.getAttribute('actualHeight'), 1e5);
     const content = kids(reg)[0];
     if (!content) return;
     switch (local(content)) {

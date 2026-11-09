@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import type { TextRegion } from '../../engine/model';
 import { store } from '../store';
 import { sanitizeHtml, htmlToPlain } from '../sanitize';
@@ -8,6 +8,8 @@ interface Props { region: TextRegion; editing: boolean; onCommit: (id: string, h
 export function TextRegionView({ region, editing, onCommit }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const html = useRef(region.html);
+  // sanitizing is expensive for large texts: only when the text changes
+  const view = useMemo(() => (!htmlToPlain(region.html).trim() ? '<span class="math-placeholder">Text</span>' : sanitizeHtml(region.html)), [region.html]);
 
   useEffect(() => {
     const el = ref.current!;
@@ -35,8 +37,7 @@ export function TextRegionView({ region, editing, onCommit }: Props) {
   const cmd = (c: string, v?: string) => { document.execCommand(c, false, v); ref.current?.focus(); };
 
   if (!editing) {
-    const empty = !htmlToPlain(region.html).trim();
-    return <div className="text-view" style={{ width: region.w }} dangerouslySetInnerHTML={{ __html: empty ? '<span class="math-placeholder">Text</span>' : sanitizeHtml(region.html) }} />;
+    return <div className="text-view" style={{ width: region.w }} dangerouslySetInnerHTML={{ __html: view }} />;
   }
   return (
     <>

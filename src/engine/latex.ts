@@ -189,7 +189,7 @@ function programLatex(stmts: Stmt[], ctx: LatexCtx): string {
         case 'for': lines.push(`${ind}${kw('for')}${nameLatex(s.v, ctx)}\\in ${toLatex(s.iter, ctx)}`); emit(s.body, depth + 1); break;
         case 'while': lines.push(`${ind}${kw('while')}${toLatex(s.cond, ctx)}`); emit(s.body, depth + 1); break;
         case 'if':
-          s.branches.forEach((b, i) => { lines.push(`${ind}${kw(i ? 'else if' : 'if')}${toLatex(b.cond, ctx)}`); emit(b.body, depth + 1); });
+          s.branches.forEach((b, i) => { lines.push(`${ind}${kw(i ? (b.also ? 'also if' : 'else if') : 'if')}${toLatex(b.cond, ctx)}`); emit(b.body, depth + 1); });
           if (s.otherwise) { lines.push(`${ind}\\textbf{else}`); emit(s.otherwise, depth + 1); }
           break;
         case 'try':

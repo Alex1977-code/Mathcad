@@ -254,3 +254,5 @@ export function percentile(values: number[], p: number): number {
   const lo = Math.floor(h);
   return v[lo] + (h - lo) * ((v[lo + 1] ?? v[lo]) - v[lo]);
 }
+
+Object.setPrototypeOf(DISTRIBUTIONS, null);

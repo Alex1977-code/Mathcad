@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { parseMathRegion, parseExpression } from '../src/engine/parser';
 import { stmtToText } from '../src/engine/serialize';
 import { computeWorksheet, type RegionResult } from '../src/engine/worksheet';
-import { emptyWorksheet, sortRegions, type Worksheet } from '../src/engine/model';
+import { emptyWorksheet, normalizeWorksheet, sortRegions, type Worksheet } from '../src/engine/model';
 import { formatReal } from '../src/engine/format';
 import { stmtLatex } from '../src/engine/latex';
 import katex from 'katex';
@@ -515,5 +515,58 @@ describe('Befunde der Testagenten: Numerik & Statistik', () => {
     expect(last(['qnorm(1.5, 0, 1) ='])).toMatch(/Wahrscheinlichkeit/);
     expect(last(['skew([1; 2]) ='])).toMatch(/mindestens 3/);
     expect(last(['corr([1; 1; 1], [1; 2; 3]) ='])).toMatch(/konstant/);
+  });
+});
+
+describe('Befunde der Testagenten: Stabilität, Import-Text, Sicherheit', () => {
+  it('Bereichsgrößen werden vorab geprüft, det ohne NaN', () => {
+    expect(run(['i := 0..1e7', 'v[i] := i'])[1].error?.message).toMatch(/Zu viele Kombinationen/);
+    expect(si(lastVal(['i := 0..99', 'j := 0..99', 'A[i,j] := mod(7*i + 13*j, 17) + 50*if(i == j, 1, 0)', 'det(A) =']))).toBeCloseTo(-4.825e174, -172);
+  });
+  it('„also if“: alle zutreffenden Zweige laufen, else nur wenn keiner zutraf', () => {
+    const p = 'g(x) :=\n  r ← 0\n  if x > 0\n    r ← r + 1\n  also if x > 5\n    r ← r + 10\n  else\n    r ← 100\n  r';
+    expect(last([p, 'g(10) ='])).toBe('11');
+    expect(last([p, 'g(1) ='])).toBe('1');
+    expect(last([p, 'g(-1) ='])).toBe('100');
+    expect(stmtToText(parseMathRegion(p))).toContain('also if x > 5');
+  });
+  it('Text-Rückumwandlung: Klammern, T als Exponent, Zeichenketten mit Escapes', () => {
+    for (const src of ['1 ⊕ (0 ∨ 1) =', 'T := 2', '3^(T) =', 's := "he said \\"hi\\"" =', 'max(7, (0, 2 .. 10)) =']) {
+      const back = stmtToText(parseMathRegion(src));
+      expect(stmtToText(parseMathRegion(back))).toBe(back);
+    }
+    expect(last(['T := 2', '3^(T) ='])).toBe('9');
+    expect(last(['1 ⊕ (0 ∨ 1) ='])).toBe('0');
+    expect(last(['s := "a\\"b"', 'strlen(s) ='])).toBe('3');
+  });
+  it('Mengen-Operator ∈', () => {
+    expect(last(['elementOf(3, "ℤ") ='])).toBe('1');
+    expect(last(['elementOf(3.1, "ℤ") ='])).toBe('0');
+    expect(last(['elementOf(π, "ℚ") ='])).toBe('0');
+    expect(last(['elementOf(0.75, "ℚ") ='])).toBe('1');
+  });
+  it('Namen aus dem Objekt-Prototyp sind nicht definiert', () => {
+    expect(last(['toString ='])).toMatch(/nicht definiert/);
+    expect(last(['__proto__ ='])).toMatch(/nicht definiert/);
+    expect(last(['constructor(2) ='])).toMatch(/nicht definiert/);
+  });
+  it('manipulierte Dokumente werden bereinigt', () => {
+    const ws = normalizeWorksheet({
+      format: 'formelwerk', title: 42, regions: [
+        null, { id: 'a', type: 'math', x: 10, y: 1e308, src: 5 },
+        { id: 'a', type: 'plot', x: 'x', y: 1, title: { evil: 1 }, traces: [{ x: 'x', y: 'x^2', color: 'url(https://track.invalid/c)' }] },
+        { id: 'i', type: 'image', x: 0, y: 0, src: 'https://track.invalid/pixel.png' },
+      ],
+    });
+    expect(ws.title).toBe('Unbenannt');
+    expect(ws.settings.decimals).toBe(3);
+    expect(ws.regions).toHaveLength(2);
+    const [m, p] = ws.regions;
+    expect(m.type === 'math' && m.src).toBe('');
+    expect(m.y).toBe(1e6);
+    expect(p.id).not.toBe('a');
+    expect(p.type === 'plot' && p.title).toBeUndefined();
+    expect(p.type === 'plot' && p.traces[0].color).toBeUndefined();
+    expect(() => normalizeWorksheet({ format: 'x', regions: [] })).toThrow();
   });
 });

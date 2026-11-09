@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { newId, type Region } from '../engine/model';
+import { newId, safeImageSrc, type Region } from '../engine/model';
 import type { ComputeResult } from '../engine/worksheet';
 import { store, useStore } from './store';
 import { MARGIN, PAGE_H, PAGE_W, regionElements, snap } from './layout';
@@ -285,7 +285,7 @@ export function Sheet({ result, onOpenExample, onImport, pending }: Props) {
                   )}
                   {r.type === 'image' && (
                     <div className="image-region-inner">
-                      <img src={r.src} alt={r.alt ?? ''} style={{ width: r.w || undefined }} draggable={false} />
+                      <img src={safeImageSrc(r.src) ?? ''} alt={r.alt ?? ''} style={{ width: r.w || undefined }} draggable={false} />
                       {r.alt && /Mathcad/.test(r.alt) && <div className="caption">{r.alt}</div>}
                     </div>
                   )}

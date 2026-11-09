@@ -2,7 +2,7 @@ import type { MathStmt, Node } from '../engine/ast';
 import { stmtToText, toText } from '../engine/serialize';
 import { parseMathRegion } from '../engine/parser';
 import { newId, type MathRegion } from '../engine/model';
-import { convertMathElement, type ConvertCtx } from './mathml';
+import { convertMathElement, findResultElement, type ConvertCtx } from './mathml';
 import { parseExpected, type Expected } from './results';
 
 export function escapeHtml(s: string): string {
@@ -38,8 +38,13 @@ export function mathRegionFrom(
     parseMathRegion(src);
   } catch (e) {
     ctx.warnings.push(`Bereich bei (${Math.round(x)}, ${Math.round(y)}): ${(e as Error).message}`);
-    src = stmt ? stmtToText(stmt) : '';
-    const region: ImportedMath = { id: newId(), type: 'math', x, y, src: src || '?', disabled: true, imported: { original: (e as Error).message } };
+    try { src = stmt ? stmtToText(stmt) : ''; } catch { src = ''; }
+    // keep the stored result: the region then counts as „not reproduced“ in the verification
+    let expected;
+    // (input controls with scripts are inputs, not calculations: they are not counted)
+    const isControl = /Control/.test((e as Error).message);
+    try { expected = isControl ? undefined : parseExpected(expectedEl ?? findResultElement(mathEl)) ?? undefined; } catch { expected = undefined; }
+    const region: ImportedMath = { id: newId(), type: 'math', x, y, src: src || '?', disabled: true, imported: { original: (e as Error).message, expected } };
     return region;
   }
   const expected = parseExpected(expectedEl ?? resultEl ?? null) ?? undefined;
@@ -48,6 +53,18 @@ export function mathRegionFrom(
     id: newId(), type: 'math', x, y, src, disabled,
     imported: { expected, symbolic: symbolic ? toText(symbolic) : undefined },
   };
+}
+
+/** Coordinate/size attribute: finite and within a sensible range (protects against crafted files). */
+export function coord(v: string | null | undefined, max = 1e6): number {
+  const x = parseFloat(v ?? '0');
+  return Number.isFinite(x) ? Math.min(Math.max(x, -max), max) : 0;
+}
+
+/** CSS text alignment from a file attribute (only known values). */
+export function alignStyle(v: string | null | undefined): string {
+  const a = (v ?? '').toLowerCase();
+  return ['center', 'right', 'justify'].includes(a) ? ` style="text-align:${a}"` : '';
 }
 
 export async function gunzip(data: Uint8Array): Promise<Uint8Array> {

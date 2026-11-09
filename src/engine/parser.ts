@@ -71,7 +71,16 @@ export function tokenize(src: string): Token[] {
     if (c === '"') {
       i++;
       let s = '';
-      while (i < src.length && src[i] !== '"') { s += src[i]; i++; }
+      while (i < src.length && src[i] !== '"') {
+        // escapes: \"  \\  \n  \t (other backslashes stay as they are, e.g. in file paths)
+        if (src[i] === '\\' && i + 1 < src.length && '"\\nt'.includes(src[i + 1])) {
+          const e = src[i + 1];
+          s += e === 'n' ? '\n' : e === 't' ? '\t' : e;
+          i += 2;
+          continue;
+        }
+        s += src[i]; i++;
+      }
       if (src[i] !== '"') throw new ParseError('Zeichenkette nicht abgeschlossen', start, i);
       i++;
       out.push({ t: 'str', v: s, pos: start, end: i, spaceBefore: space });
@@ -107,7 +116,7 @@ export function tokenize(src: string): Token[] {
 /* ------------------------------------------------------------------ */
 
 /** Names that are parsed as special operators when called like functions. */
-const ITER_FUNCS: Record<string, 'sum' | 'prod'> = { sum: 'sum', Σ: 'sum', '∑': 'sum', prod: 'prod', Π: 'prod', '∏': 'prod' };
+const ITER_FUNCS: Record<string, 'sum' | 'prod'> = { __proto__: null as never, sum: 'sum', Σ: 'sum', '∑': 'sum', prod: 'prod', Π: 'prod', '∏': 'prod' };
 
 class Parser {
   i = 0;
@@ -603,18 +612,18 @@ function parseBlock(ls: Line[], i: number, indent: number): [Stmt[], number] {
     };
     if (kw === 'if') {
       const cond = wrapErr(line, 2, () => parseExpression(text.slice(2), false));
-      const branches = [{ cond, body: body() }];
+      const branches: { cond: Node; body: Stmt[]; also?: boolean }[] = [{ cond, body: body() }];
       let otherwise: Stmt[] | undefined;
       while (i < ls.length && ls[i].indent === indent) {
         const l2 = ls[i];
-        const m = /^(else\s+if|elseif)\b(.*)$/.exec(l2.text);
+        const m = /^(else\s+if|elseif|also\s+if)\b(.*)$/.exec(l2.text);
         if (m) {
           const c = wrapErr(l2, l2.text.length - m[2].length, () => parseExpression(m[2], false));
           const ci = i + 1 < ls.length && ls[i + 1].indent > indent ? ls[i + 1].indent : -1;
           if (ci < 0) throw new ParseError('Eingerückter Block erwartet', l2.pos);
           const [b, n] = parseBlock(ls, i + 1, ci);
           i = n;
-          branches.push({ cond: c, body: b });
+          branches.push(m[1].startsWith('also') ? { cond: c, body: b, also: true } : { cond: c, body: b });
           continue;
         }
         if (/^(else|otherwise)$/.test(l2.text)) {
@@ -660,7 +669,7 @@ function parseBlock(ls: Line[], i: number, indent: number): [Stmt[], number] {
     }
     if (text === 'break') { out.push({ k: 'break' }); i++; continue; }
     if (text === 'continue') { out.push({ k: 'continue' }); i++; continue; }
-    if (/^(else|otherwise|elseif|else\s+if)\b/.test(text)) throw new ParseError('„else“ ohne passendes „if“', line.pos);
+    if (/^(else|otherwise|elseif|else\s+if|also\s+if)\b/.test(text)) throw new ParseError('„else“ ohne passendes „if“', line.pos);
     const am = /^(.+?)\s*(←|<-(?=\s)|:=)\s*(.+)$/.exec(text);
     if (am) {
       const target = wrapErr(line, 0, () => parseExpression(am[1], false));

@@ -33,7 +33,8 @@ export type Node =
 
 export type Stmt =
   | { k: 'assign'; target: Node; value: Node }
-  | { k: 'if'; branches: { cond: Node; body: Stmt[] }[]; otherwise?: Stmt[] }
+  /** `also` branches (Prime „also if“, Mathcad 15 consecutive „if“) are tested even after an earlier branch was taken. */
+  | { k: 'if'; branches: { cond: Node; body: Stmt[]; also?: boolean }[]; otherwise?: Stmt[] }
   | { k: 'for'; v: string; iter: Node; body: Stmt[] }
   | { k: 'while'; cond: Node; body: Stmt[] }
   | { k: 'return'; value: Node }

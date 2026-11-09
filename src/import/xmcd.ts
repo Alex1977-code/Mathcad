@@ -1,7 +1,7 @@
 /** Import of Mathcad 11–15 worksheets (.xmcd, XML). */
 import { emptyWorksheet, newId, type Region, type Worksheet } from '../engine/model';
 import { collectDefinedNames, kids, local, child, type ConvertCtx } from './mathml';
-import { base64ToBytes, bytesToBase64, defaultXmlParser, escapeHtml, gunzip, imageMime, mathRegionFrom, type XmlParser } from './common';
+import { alignStyle, base64ToBytes, bytesToBase64, coord, defaultXmlParser, escapeHtml, gunzip, imageMime, mathRegionFrom, type XmlParser } from './common';
 
 /** Mathcad 11–15 coordinates are in points (1/72 in); we use CSS pixels (1/96 in). */
 const SCALE = 96 / 72;
@@ -15,8 +15,7 @@ function textToHtml(textEl: Element): string {
     switch (e.localName) {
       case 'p': {
         const style = e.getAttribute('style') ?? '';
-        const align = e.getAttribute('text-align');
-        const st = align && align !== 'inherit' ? ` style="text-align:${align}"` : '';
+        const st = alignStyle(e.getAttribute('text-align'));
         const body = inner();
         if (/heading\s*1|title/i.test(style)) return `<h2${st}>${body}</h2>`;
         if (/heading/i.test(style)) return `<h3${st}>${body}</h3>`;
@@ -29,7 +28,7 @@ function textToHtml(textEl: Element): string {
       case 'sup': return `<sup>${inner()}</sup>`;
       case 'br': return '<br>';
       case 'tab': return '&emsp;';
-      case 'sp': return '&nbsp;'.repeat(parseInt(e.getAttribute('count') ?? '1', 10) || 1);
+      case 'sp': return '&nbsp;'.repeat(Math.min(Math.max(parseInt(e.getAttribute('count') ?? '1', 10) || 1, 1), 200));
       case 'f': {
         const color = e.getAttribute('color');
         const style = color && /^#?[0-9a-f]{6}$/i.test(color) ? ` style="color:${color.startsWith('#') ? color : '#' + color}"` : '';
@@ -81,17 +80,17 @@ export async function importXmcd(xml: string, name: string, parseXml: XmlParser 
   let plotsAsImages = 0;
   for (const reg of regionsEl ? kids(regionsEl) : []) {
     if (local(reg) !== 'region') continue;
-    const x = parseFloat(reg.getAttribute('left') ?? '0') * SCALE;
-    const y = parseFloat(reg.getAttribute('top') ?? '0') * SCALE;
-    const w = parseFloat(reg.getAttribute('width') ?? '0') * SCALE;
-    const h = parseFloat(reg.getAttribute('height') ?? '0') * SCALE;
+    const x = coord(reg.getAttribute('left')) * SCALE;
+    const y = coord(reg.getAttribute('top')) * SCALE;
+    const w = coord(reg.getAttribute('width'), 1e4) * SCALE;
+    const h = coord(reg.getAttribute('height'), 1e5) * SCALE;
     const content = kids(reg).find(c => local(c) !== 'rendering');
     if (!content) continue;
     switch (local(content)) {
       case 'math': {
         const m = mathRegionFrom(content, x, y, ctx);
         const ay = parseFloat(reg.getAttribute('align-y') ?? '');
-        if (!Number.isNaN(ay)) m.oy = ay * SCALE - y;
+        if (Number.isFinite(ay) && Math.abs(ay) < 1e6) m.oy = ay * SCALE - y;
         regions.push(m);
         break;
       }

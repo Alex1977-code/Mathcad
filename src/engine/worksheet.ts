@@ -6,7 +6,7 @@ import { CONSTANTS, getRandomState, isBuiltinFunction, resetRandom } from './bui
 import { getStatsSeed, setStatsSeed } from './stats';
 import { lookupUnit, math } from './units';
 import {
-  CalcError, Scope, isFn, isMatrix, isRange, isUnit, isComplex, rangeValues, makeMatrix, toNumber,
+  CalcError, Scope, isFn, isMatrix, isRange, isUnit, isComplex, rangeLength, rangeValues, makeMatrix, toNumber,
   type FnVal, type RangeVal, type Val,
 } from './values';
 import { escapeText, formatValue, formatReal, type FormatOptions, siUnitFactors, unitFactorsText } from './format';
@@ -89,6 +89,10 @@ export function freeRangeVars(n: Node, scope: Scope): string[] {
 }
 
 function cartesian(names: string[], scope: Scope): Map<string, Val>[] {
+  // check the size before creating anything
+  let total = 1;
+  for (const name of names) total *= rangeLength(scope.get(name) as RangeVal);
+  if (total > 2e6) throw new CalcError(`Zu viele Kombinationen von Bereichsvariablen (${total.toExponential(1)}, höchstens 2·10⁶)`);
   let combos: Map<string, Val>[] = [new Map()];
   for (const name of names) {
     const vals = rangeValues(scope.get(name) as RangeVal);
@@ -172,6 +176,10 @@ export class WorksheetEngine {
   step(r: Region, parsed: (r: MathRegion) => MathStmt | ParseError, globalResults: Record<string, RegionResult>): RegionResult | undefined {
     if (r.type === 'plot') return { id: r.id, plot: this.runPlot(r) };
     if (r.type !== 'math') return undefined;
+    // imported formula that could not be converted, but has a result stored by Mathcad: counts as not reproduced
+    if (r.disabled && r.imported?.original && r.imported.expected) {
+      return { id: r.id, kind: undefined, latex: `\\text{${escapeText(r.src.slice(0, 200))}}`, check: { status: 'mismatch', expected: expectedToText(r.imported.expected, this.fmt.decimals + 1) }, error: { message: `Nicht unterstützt: ${r.imported.original}`, kind: 'calc' } };
+    }
     const p = parsed(r);
     if (p instanceof ParseError) return { id: r.id, kind: undefined, error: { message: p.message, pos: p.pos, end: p.end, kind: 'parse' } };
     if (p.kind === 'define' && p.global) return globalResults[r.id];
@@ -211,9 +219,8 @@ export class WorksheetEngine {
           info = { name, kind: 'Funktion', text: `${name}(${f.params.join(', ')})`, latex: '', regionId };
         } else if (isRange(v)) {
           const rv = v as RangeVal;
-          const vals = rangeValues(rv);
           const a = formatValue(rv.start, this.fmt).text, b = formatValue(rv.end, this.fmt).text;
-          info = { name, kind: 'Bereich', text: `${a} … ${b} (${vals.length} Werte)`, latex: '', regionId };
+          info = { name, kind: 'Bereich', text: `${a} … ${b} (${rangeLength(rv)} Werte)`, latex: '', regionId };
         } else {
           const f = formatValue(v, { ...this.fmt, maxMatrix: 4 });
           info = { name, kind: 'Variable', text: f.text, latex: f.latex, regionId };
@@ -223,7 +230,8 @@ export class WorksheetEngine {
     }
     variables.sort((a, b) => a.name.localeCompare(b.name, 'de'));
     const errorCount = Object.values(results).filter(r => r.error || r.plot?.error).length;
-    const checks = Object.values(results).filter(r => r.check);
+    // results that cannot be verified (unreadable stored value) are not counted
+    const checks = Object.values(results).filter(r => r.check && r.check.status !== 'skipped');
     const verification = checks.length ? {
       match: checks.filter(r => r.check!.status === 'match').length,
       mismatch: checks.filter(r => r.check!.status === 'mismatch').length,
@@ -315,7 +323,7 @@ export class WorksheetEngine {
               let disp: Val;
               if (shown.length === 1) disp = shown[0];
               else if (rangeNames.length === 2) {
-                const nj = rangeValues(scope.get(rangeNames[1]) as RangeVal).length;
+                const nj = rangeLength(scope.get(rangeNames[1]) as RangeVal);
                 const rows: Val[][] = [];
                 for (let k = 0; k < shown.length; k += nj) rows.push(shown.slice(k, k + nj));
                 disp = makeMatrix(rows);

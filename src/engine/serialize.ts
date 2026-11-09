@@ -47,7 +47,7 @@ export function toText(n: Node): string {
   switch (n.k) {
     case 'num': return fmtNum(n.v, n.raw);
     case 'imag': return fmtNum(n.v, n.raw) + 'i';
-    case 'str': return JSON.stringify(n.v).replace(/\\\\/g, '\\');
+    case 'str': return '"' + n.v.replace(/\\(?=["\\nt])/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\t/g, '\\t') + '"';
     case 'id': return n.name;
     case 'placeholder': return '?';
     case 'paren': return `(${toText(n.a)})`;
@@ -57,13 +57,15 @@ export function toText(n: Node): string {
         // right assoc: left needs strictly higher precedence
         const left = wrap(n.a, 9);
         const r = n.b;
-        const right = r.k === 'un' && r.op === 'neg' ? '-' + wrap(r.a, 9) : wrap(r, 8);
+        // a variable named T as exponent must not turn into the transpose
+        const right = r.k === 'un' && r.op === 'neg' ? '-' + wrap(r.a, 9) : r.k === 'id' && r.name === 'T' ? '(T)' : wrap(r, 8);
         return `${left}^${right}`;
       }
       if (n.op === '*' && n.implicit) return `${wrap(n.a, p)} ${wrap(n.b, 8)}`;
       const left = wrap(n.a, p);
-      // left-assoc: right side needs higher precedence for - and /
-      const right = wrap(n.b, n.op === '-' || n.op === '/' || p === 4 ? p + 1 : p);
+      // left-assoc: the right side needs parentheses unless it is the same associative operator
+      const assoc = n.b.k === 'bin' && n.b.op === n.op && ['+', '*', 'and', 'or'].includes(n.op) && !n.b.implicit;
+      const right = wrap(n.b, assoc ? p : p + 1);
       return left + OP_TEXT[n.op] + right;
     }
     case 'un':
@@ -73,13 +75,13 @@ export function toText(n: Node): string {
         case 'fact': return wrap(n.a, 10) + '!';
         case 'pct': return wrap(n.a, 10) + '%';
         case 'transpose': return wrap(n.a, 10) + '^T';
-        case 'abs': return `|${toText(n.a)}|`;
+        case 'abs': return prec(n.a) < 5 ? `|(${toText(n.a)})|` : `|${toText(n.a)}|`;
         case 'sqrt': return `√(${toText(n.a)})`;
         case 'vec': return `vec(${toText(n.a)})`;
       }
       return '';
     case 'nroot': return `nthroot(${toText(n.a)}, ${toText(n.n)})`;
-    case 'call': return `${n.name}(${n.args.map(toText).join(', ')})`;
+    case 'call': return `${n.name}(${n.args.map(a => (a.k === 'range' && a.second ? `(${toText(a)})` : toText(a))).join(', ')})`;
     case 'index': return `${wrap(n.a, 10)}[${n.idx.map(toText).join(', ')}]`;
     case 'col': return `${wrap(n.a, 10)}<<${toText(n.j)}>>`;
     case 'matrix': return `[${n.rows.map(r => r.map(toText).join(', ')).join('; ')}]`;
@@ -112,7 +114,7 @@ function stmtsToText(stmts: Stmt[], ind: string): string {
       case 'for': lines.push(`${ind}for ${s.v} ∈ ${toText(s.iter)}`); block(s.body); break;
       case 'while': lines.push(`${ind}while ${toText(s.cond)}`); block(s.body); break;
       case 'if':
-        s.branches.forEach((b, i) => { lines.push(`${ind}${i ? 'else if' : 'if'} ${toText(b.cond)}`); block(b.body); });
+        s.branches.forEach((b, i) => { lines.push(`${ind}${i ? (b.also ? 'also if' : 'else if') : 'if'} ${toText(b.cond)}`); block(b.body); });
         if (s.otherwise) { lines.push(ind + 'else'); block(s.otherwise); }
         break;
       case 'try':

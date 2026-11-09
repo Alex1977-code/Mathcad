@@ -21,7 +21,7 @@ class ConvertError extends Error {}
 
 /* ---------------------------------- names ---------------------------------- */
 
-const NAME_FIX: Record<string, string> = { find: 'Find', given: 'Given', minerr: 'Minerr' };
+const NAME_FIX: Record<string, string> = { __proto__: null as never, find: 'Find', given: 'Given', minerr: 'Minerr' };
 
 function cleanPart(s: string, isSub: boolean): string {
   let out = '';
@@ -103,7 +103,9 @@ export function convertExpr(e: Element, ctx: ConvertCtx): Node {
     case 'matrix': {
       const rows = parseInt(e.getAttribute('rows') ?? '1', 10);
       const cols = parseInt(e.getAttribute('cols') ?? '1', 10);
-      const els = kids(e).filter(c => local(c) !== 'display').map(c => convertExpr(c, ctx));
+      const raw = kids(e).filter(c => local(c) !== 'display');
+      if (!(rows >= 1 && cols >= 1) || rows * cols > 1e5 || raw.length !== rows * cols) throw new ConvertError(`Ungültige Matrix (${rows}×${cols}, ${raw.length} Elemente)`);
+      const els = raw.map(c => convertExpr(c, ctx));
       // Mathcad stores matrices column by column
       const out: Node[][] = Array.from({ length: rows }, (_, i) => Array.from({ length: cols }, (_, j) => els[j * rows + i] ?? { k: 'placeholder' }));
       return { k: 'matrix', rows: out };
@@ -251,7 +253,13 @@ function convertApply(e: Element, ctx: ConvertCtx): Node {
       const order = degEl && local(degEl) === 'real' ? parseFloat(degEl.textContent ?? '1') : 1;
       return { k: 'deriv', body, v, order };
     }
-    case 'elementOf': throw new ConvertError('Mengen-Operator ∈ wird nicht unterstützt');
+    case 'elementOf': {
+      // x ∈ ℤ/ℝ/ℂ/ℚ/ℕ → elementOf(x, "ℤ")
+      const setEl = rest[1];
+      const set = setEl && local(setEl) === 'id' ? idName(setEl) : '';
+      if (!['ℤ', 'ℝ', 'ℂ', 'ℚ', 'ℕ'].includes(set)) throw new ConvertError('Mengen-Operator ∈ nur für ℕ, ℤ, ℚ, ℝ, ℂ unterstützt');
+      return { k: 'call', name: 'elementOf', args: [conv(rest[0]), { k: 'str', v: set }] };
+    }
     case 'limit': throw new ConvertError('Grenzwerte (lim) werden nur symbolisch in Mathcad berechnet');
     default:
       ctx.unknown.add(op);
@@ -277,32 +285,34 @@ function convertProgramItems(items: Element[], ctx: ConvertCtx): Stmt[] {
       }
       case 'if': {
         // Prime: <if><test/><then/><elseif><test/><then/></elseif>…<else/></if>
-        const branches: { cond: Node; body: Stmt[] }[] = [];
+        const branches: { cond: Node; body: Stmt[]; also?: boolean }[] = [];
         let otherwise: Stmt[] | undefined;
         const test = child(s, 'test'), then = child(s, 'then');
         if (test && then) branches.push({ cond: convertExpr(kids(test)[0], ctx), body: block(then, ctx) });
         for (const c of kids(s)) {
-          if (local(c) === 'elseif') {
+          if (local(c) === 'elseif' || local(c) === 'alsoif') {
             const t2 = child(c, 'test'), th2 = child(c, 'then');
-            if (t2 && th2) branches.push({ cond: convertExpr(kids(t2)[0], ctx), body: block(th2, ctx) });
+            if (t2 && th2) branches.push({ cond: convertExpr(kids(t2)[0], ctx), body: block(th2, ctx), ...(local(c) === 'alsoif' ? { also: true } : {}) });
           } else if (local(c) === 'else') otherwise = block(c, ctx);
         }
         out.push({ k: 'if', branches, otherwise });
         break;
       }
       case 'ifThen': {
-        // Mathcad 15: consecutive "value if cond" lines, optionally followed by "otherwise"
-        const branches: { cond: Node; body: Stmt[] }[] = [];
+        // Mathcad 15: consecutive "statement if cond" lines are independent of each other;
+        // a following "otherwise" runs when none of them applied
+        const branches: { cond: Node; body: Stmt[]; also?: boolean }[] = [];
         let j = i;
         while (j < items.length && local(items[j]) === 'ifThen') {
           const [c, v] = kids(items[j]);
-          branches.push({ cond: convertExpr(c, ctx), body: block(v, ctx) });
+          if (!c || !v) throw new ConvertError('Unvollständige if-Anweisung');
+          branches.push(branches.length ? { cond: convertExpr(c, ctx), body: block(v, ctx), also: true } : { cond: convertExpr(c, ctx), body: block(v, ctx) });
           j++;
         }
         let otherwise: Stmt[] | undefined;
         if (j < items.length && local(items[j]) === 'otherwise') { otherwise = block(kids(items[j])[0], ctx); j++; }
-        if (otherwise) out.push({ k: 'if', branches, otherwise });
-        else for (const b of branches) out.push({ k: 'if', branches: [b] });
+        if (otherwise || branches.length === 1) out.push({ k: 'if', branches, otherwise });
+        else for (const b of branches) out.push({ k: 'if', branches: [{ cond: b.cond, body: b.body }] });
         i = j - 1;
         break;
       }
@@ -340,7 +350,8 @@ function block(e: Element | undefined, ctx: ConvertCtx): Stmt[] {
     if (c.length === 1 && local(c[0]) === 'program') return convertProgram(c[0], ctx);
     return convertProgram(e, ctx);
   }
-  return [{ k: 'expr', value: convertExpr(e, ctx) }];
+  // a single statement as body (Mathcad 15 without <program>): break, return, for, local definition, …
+  return convertProgramItems([e], ctx);
 }
 
 /* -------------------------------- statements -------------------------------- */
@@ -378,6 +389,16 @@ function unitOverride(e: Element, ctx: ConvertCtx): Node | undefined {
 }
 
 export interface ConvertedMath { stmt: MathStmt; symbolic?: Node; resultEl?: Element }
+
+/** The stored result of a formula (<result> of its <eval>), also when the formula itself cannot be converted. */
+export function findResultElement(math: Element): Element | null {
+  const all = math.getElementsByTagNameNS('*', 'result');
+  for (let i = 0; i < all.length; i++) {
+    const p = all[i].parentElement;
+    if (p && local(p) === 'eval') return all[i];
+  }
+  return null;
+}
 
 /** Convert the content of a <math> element. */
 export function convertMathElement(math: Element, ctx: ConvertCtx): ConvertedMath {

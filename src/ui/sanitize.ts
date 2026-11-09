@@ -3,14 +3,17 @@ const TAGS = new Set(['P', 'BR', 'B', 'STRONG', 'I', 'EM', 'U', 'SUB', 'SUP', 'S
 const STYLE_PROPS = ['color', 'font-size', 'font-weight', 'font-style', 'text-align', 'text-decoration', 'background-color'];
 
 export function sanitizeHtml(html: string): string {
+  if (html.length > 500000) html = html.slice(0, 500000);
   const doc = new DOMParser().parseFromString(`<div>${html}</div>`, 'text/html');
   const root = doc.body.firstElementChild as HTMLElement;
-  const clean = (el: Element) => {
+  const clean = (el: Element, depth: number) => {
     for (const child of Array.from(el.children)) {
+      // absurdly deep nesting (crafted files): keep only the text
+      if (depth > 40) { child.replaceWith(doc.createTextNode(child.textContent ?? '')); continue; }
       if (!TAGS.has(child.tagName)) {
         if (['SCRIPT', 'STYLE', 'IFRAME', 'OBJECT', 'EMBED', 'LINK', 'META'].includes(child.tagName)) { child.remove(); continue; }
         // unwrap unknown elements
-        clean(child);
+        clean(child, depth + 1);
         child.replaceWith(...Array.from(child.childNodes));
         continue;
       }
@@ -29,10 +32,10 @@ export function sanitizeHtml(html: string): string {
           child.removeAttribute(attr.name);
         }
       }
-      clean(child);
+      clean(child, depth + 1);
     }
   };
-  clean(root);
+  clean(root, 0);
   return root.innerHTML;
 }
 

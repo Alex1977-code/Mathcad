@@ -63,14 +63,24 @@ export const isMatrix = (v: unknown): v is Matrix => math.isMatrix(v);
 export const isUnit = (v: unknown): v is Unit => isUnitFast(v);
 export const isComplex = (v: unknown): v is Complex => math.isComplex(v);
 
-export function rangeValues(r: RangeVal): (number | Unit)[] {
-  const out: (number | Unit)[] = [];
+/** Number of values of a range without creating them. */
+export function rangeLength(r: RangeVal): number {
   const toN = (x: number | Unit) => (isUnit(x) ? (x as Unit).value as number : x as number);
   const start = toN(r.start), step = toN(r.step), end = toN(r.end);
+  if (!isFinite(start) || !isFinite(end)) throw new CalcError('Bereichsgrenzen müssen endlich sein');
   if (step === 0 || !isFinite(step)) throw new CalcError('Ungültige Schrittweite im Bereich');
-  if ((end - start) / step < -1e-12) return out;
-  const n = Math.floor((end - start) / step + 1e-9);
-  if (n > 1e7) throw new CalcError('Bereich zu groß');
+  if ((end - start) / step < -1e-12) return 0;
+  return Math.floor((end - start) / step + 1e-9) + 1;
+}
+
+export function rangeValues(r: RangeVal, limit = 1e7): (number | Unit)[] {
+  const out: (number | Unit)[] = [];
+  const toN = (x: number | Unit) => (isUnit(x) ? (x as Unit).value as number : x as number);
+  const start = toN(r.start), step = toN(r.step);
+  const len = rangeLength(r);
+  if (len === 0) return out;
+  const n = len - 1;
+  if (len > limit) throw new CalcError('Bereich zu groß');
   const tmpl = isUnit(r.start) ? (r.start as Unit) : isUnit(r.end) ? (r.end as Unit) : null;
   for (let i = 0; i <= n; i++) {
     const v = start + i * step;

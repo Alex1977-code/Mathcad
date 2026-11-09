@@ -113,3 +113,5 @@ export const COMMON_UNITS: { group: string; units: string[] }[] = [
   { group: 'Temperatur', units: ['K', '°C', '°F'] },
   { group: 'Winkel', units: ['rad', 'deg', 'rpm'] },
 ];
+
+for (const t of [ANGLE_UNITS, SCALAR_UNITS, ALIASES]) Object.setPrototypeOf(t, null);

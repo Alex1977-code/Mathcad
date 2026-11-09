@@ -551,3 +551,9 @@ button.status-item:hover { background: var(--bg-hover); }
   .pagebreak-region { break-after: page; }
   .pagebreak-region::before, .pagebreak-region span { display: none; }
 }
+
+/* recovery page of the error boundary */
+.crash { max-width: 640px; margin: 15vh auto; padding: 24px; font-family: system-ui, sans-serif; color: var(--text, #1d2330); }
+.crash h1 { font-size: 20px; margin: 0 0 12px; }
+.crash code { background: rgba(127, 127, 127, 0.15); padding: 1px 4px; border-radius: 4px; }
+.crash button { margin-top: 12px; padding: 8px 14px; border-radius: 8px; border: 1px solid #8884; background: var(--accent, #2f6fed); color: #fff; cursor: pointer; }

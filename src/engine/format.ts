@@ -1,5 +1,6 @@
 import type { Complex, Matrix, Unit } from 'mathjs';
-import { isComplex, isFn, isMatrix, isRange, isUnit, matrixRows, rangeValues, type Val } from './values';
+import { isComplex, isFn, isMatrix, isRange, isUnit, matrixRows, rangeLength, type Val } from './values';
+import { withValue } from './quantity';
 
 export interface FormatOptions {
   /** Number of decimal places. */
@@ -170,7 +171,12 @@ export function formatValue(v: Val, o: FormatOptions = DEFAULT_FORMAT): Formatte
   if (typeof v === 'string') return { latex: `\\text{“${escapeText(v)}”}`, text: `"${v}"` };
   if (isFn(v)) return { latex: `\\text{Funktion}`, text: 'Funktion' };
   if (isRange(v)) {
-    const vals = rangeValues(v);
+    // only the shown part of a long range is created
+    const vals: Val[] = [];
+    const n = Math.min(rangeLength(v), o.maxMatrix + 1);
+    const step = isUnit(v.step) ? (v.step as Unit).value as number : v.step as number;
+    const s0 = isUnit(v.start) ? (v.start as Unit).value as number : v.start as number;
+    for (let i = 0; i < n; i++) vals.push(isUnit(v.start) ? withValue(v.start as Unit, s0 + i * step) : s0 + i * step);
     return formatColumn(vals, o);
   }
   if (isMatrix(v)) return formatMatrix(v as Matrix, o);

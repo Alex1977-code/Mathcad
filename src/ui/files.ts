@@ -1,4 +1,4 @@
-import type { Worksheet } from '../engine/model';
+import { normalizeWorksheet, type Worksheet } from '../engine/model';
 import { loadWorksheetFile, ACCEPTED_EXTENSIONS } from '../import';
 import { regionElements } from './layout';
 
@@ -84,7 +84,7 @@ body{overflow:auto;background:#eef0f4}.page{margin:24px auto;background-image:no
   void regionElements;
 }
 
-const AUTOSAVE = 'formelwerk.autosave.v1';
+export const AUTOSAVE = 'formelwerk.autosave.v1';
 export function autosave(ws: Worksheet) {
   try { localStorage.setItem(AUTOSAVE, JSON.stringify(ws)); } catch { /* quota or private mode */ }
 }
@@ -92,7 +92,6 @@ export function loadAutosave(): Worksheet | null {
   try {
     const s = localStorage.getItem(AUTOSAVE);
     if (!s) return null;
-    const ws = JSON.parse(s) as Worksheet;
-    return ws.format === 'formelwerk' && Array.isArray(ws.regions) ? ws : null;
+    return normalizeWorksheet(JSON.parse(s));
   } catch { return null; }
 }

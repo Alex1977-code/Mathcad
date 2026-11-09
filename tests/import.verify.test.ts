@@ -75,3 +75,54 @@ describe('Mathcad Prime (.mcdx)', () => {
     writeReport('mathcad-samples-verifikation.txt', reports);
   });
 });
+
+describe('Befunde der Testagenten: Import-Robustheit', () => {
+  const xmcd = (regions: string, enc = 'UTF-8') => `<?xml version="1.0" encoding="${enc}"?>
+<worksheet version="3.0.3" xmlns="http://schemas.mathsoft.com/worksheet30" xmlns:ml="http://schemas.mathsoft.com/math30"><regions>${regions}</regions></worksheet>`;
+  const region = (id: number, top: number, math: string) => `<region region-id="${id}" left="10" top="${top}" width="100" height="16"><math>${math}</math></region>`;
+  const load = (s: string) => loadWorksheetFile('t.xmcd', new TextEncoder().encode(s));
+  const srcs = (ws: Awaited<ReturnType<typeof load>>) => sortRegions(ws.regions).filter(r => r.type === 'math').map(r => (r as MathRegion).src);
+
+  it('Programme mit Einzelanweisung als Rumpf (Mathcad 15)', async () => {
+    const f = `<ml:define><ml:function><ml:id>f</ml:id><ml:boundVars><ml:id>n</ml:id></ml:boundVars></ml:function><ml:program>
+      <ml:localDefine><ml:id>s</ml:id><ml:real>0</ml:real></ml:localDefine>
+      <ml:for><ml:id>i</ml:id><ml:range><ml:real>1</ml:real><ml:id>n</ml:id></ml:range><ml:localDefine><ml:id>s</ml:id><ml:apply><ml:plus/><ml:id>s</ml:id><ml:id>i</ml:id></ml:apply></ml:localDefine></ml:for>
+      <ml:id>s</ml:id></ml:program></ml:define>`;
+    const ws = await load(xmcd(region(1, 10, f) + region(2, 60, '<ml:eval><ml:apply><ml:id>f</ml:id><ml:real>4</ml:real></ml:apply></ml:eval>')));
+    const res = computeWorksheet(ws);
+    const last = sortRegions(ws.regions).filter(r => r.type === 'math').pop()!;
+    expect(res.results[last.id].resultText).toBe('10');
+  });
+  it('aufeinanderfolgende „if“ sind unabhängig, otherwise nur wenn keins zutraf', async () => {
+    const add = (k: number) => `<ml:localDefine><ml:id>r</ml:id><ml:apply><ml:plus/><ml:id>r</ml:id><ml:real>${k}</ml:real></ml:apply></ml:localDefine>`;
+    const cond = (k: number) => `<ml:apply><ml:greaterThan/><ml:id>x</ml:id><ml:real>${k}</ml:real></ml:apply>`;
+    const f = `<ml:define><ml:function><ml:id>h</ml:id><ml:boundVars><ml:id>x</ml:id></ml:boundVars></ml:function><ml:program>
+      <ml:localDefine><ml:id>r</ml:id><ml:real>0</ml:real></ml:localDefine>
+      <ml:ifThen>${cond(0)}${add(1)}</ml:ifThen><ml:ifThen>${cond(5)}${add(10)}</ml:ifThen>
+      <ml:otherwise><ml:localDefine><ml:id>r</ml:id><ml:real>100</ml:real></ml:localDefine></ml:otherwise>
+      <ml:id>r</ml:id></ml:program></ml:define>`;
+    const ev = (v: number, top: number) => region(top, top, `<ml:eval><ml:apply><ml:id>h</ml:id><ml:real>${v}</ml:real></ml:apply></ml:eval>`);
+    const ws = await load(xmcd(region(1, 10, f) + ev(10, 100) + ev(-1, 140)));
+    const res = computeWorksheet(ws);
+    const m = sortRegions(ws.regions).filter(r => r.type === 'math');
+    expect(res.results[m[1].id].resultText).toBe('11');
+    expect(res.results[m[2].id].resultText).toBe('100');
+  });
+  it('kaputte Koordinaten, riesige Matrizen und Leerzeichen-Zahlen', async () => {
+    const big = '<ml:define><ml:id>M</ml:id><ml:matrix rows="3000" cols="3000"><ml:real>1</ml:real></ml:matrix></ml:define>';
+    const ws = await load(xmcd(region(1, 10, '<ml:define><ml:id>a</ml:id><ml:real>1</ml:real></ml:define>').replace('top="10"', 'top="1e400"') + region(2, 20, big)
+      + '<region region-id="3" left="0" top="40" width="10" height="10"><text><p>x<sp count="999999999"/>y</p></text></region>'));
+    for (const r of ws.regions) { expect(Number.isFinite(r.y)).toBe(true); expect(r.y).toBeLessThanOrEqual(1e6); }
+    expect(ws.source?.warnings.join(' ')).toMatch(/Ungültige Matrix/);
+    const t = ws.regions.find(r => r.type === 'text');
+    expect(t && t.type === 'text' && t.html.length).toBeLessThan(5000);
+  });
+  it('Formaterkennung nach Inhalt und Kodierung', async () => {
+    const s = xmcd(region(1, 10, '<ml:define><ml:id>ä</ml:id><ml:real>2</ml:real></ml:define>'), 'ISO-8859-1');
+    const latin = Uint8Array.from(Array.from(s).map(c => c.charCodeAt(0)));
+    expect(srcs(await loadWorksheetFile('t.mcdx', latin))).toEqual(['ä := 2']);
+    const u16 = new Uint8Array(2 + s.length * 2); u16[0] = 0xff; u16[1] = 0xfe;
+    for (let i = 0; i < s.length; i++) { u16[2 + 2 * i] = s.charCodeAt(i) & 0xff; u16[3 + 2 * i] = s.charCodeAt(i) >> 8; }
+    expect(srcs(await loadWorksheetFile('t.xmcd', u16))).toEqual(['ä := 2']);
+  });
+});

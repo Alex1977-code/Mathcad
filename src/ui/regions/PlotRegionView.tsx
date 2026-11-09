@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import type { PlotRegion } from '../../engine/model';
+import { safeColor, type PlotRegion } from '../../engine/model';
 import type { PlotData } from '../../engine/worksheet';
 import { formatReal } from '../../engine/format';
 import { IconEdit } from '../icons';
@@ -120,7 +120,7 @@ export function PlotRegionView({ region, data, onEdit }: Props) {
           </g>
           <g clipPath={`url(#clip-${region.id})`}>
             {data!.traces.map((t, i) => {
-              const color = t.color ?? PLOT_COLORS[i % PLOT_COLORS.length];
+              const color = safeColor(t.color) ?? PLOT_COLORS[i % PLOT_COLORS.length];
               const style = t.style ?? 'line';
               return (
                 <g key={i}>
@@ -138,7 +138,7 @@ export function PlotRegionView({ region, data, onEdit }: Props) {
               {data!.traces.map((t, i) => (
                 <g key={i} transform={`translate(0 ${i * 16})`}>
                   <rect x={-4} y={-9} width={Math.min(plotW - 10, 14 + t.label.length * 6.4)} height={15} fill="var(--page)" opacity={0.85} />
-                  <line x1={0} x2={12} y1={-2} y2={-2} stroke={t.color ?? PLOT_COLORS[i % PLOT_COLORS.length]} strokeWidth={2.5} />
+                  <line x1={0} x2={12} y1={-2} y2={-2} stroke={safeColor(t.color) ?? PLOT_COLORS[i % PLOT_COLORS.length]} strokeWidth={2.5} />
                   <text x={16} y={2}>{t.label}</text>
                 </g>
               ))}

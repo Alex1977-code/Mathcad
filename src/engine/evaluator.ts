@@ -5,7 +5,7 @@ import {
   CalcError, Scope, isFn, isMatrix, isRange, isUnit, isComplex, makeMatrix, matrixRows, rowsOf,
   rangeValues, toInt, toNumber, type FnVal, type RangeVal, type Val,
 } from './values';
-import { BUILTINS, LAZY_BUILTINS, CONSTANTS, PHYS_CONSTANTS } from './builtins';
+import { BUILTINS, LAZY_BUILTINS, CONSTANTS, PHYS_CONSTANTS, determinant } from './builtins';
 import { derivative, integrate } from './numeric';
 import { hasOffset, mkQ, qBinary, qNeg, qPow, UnitMismatch, withValue } from './quantity';
 
@@ -382,7 +382,7 @@ export class Evaluator {
               for (const x of rowsOf(m).flat()) acc = this.binary('+', acc, this.binary('*', x, x));
               return this.power(acc, 0.5, false);
             }
-            if (s[0] === s[1]) return this.simplify(math.det(m) as Val);
+            if (s[0] === s[1]) return this.simplify(determinant(m));
             throw new CalcError('|M| ist nur für Vektoren und quadratische Matrizen definiert');
           }
           if (typeof a === 'string') return a.length;
@@ -660,12 +660,13 @@ export class Evaluator {
         case 'if': {
           let taken = false;
           for (const br of s.branches) {
+            // "else if" only while nothing was taken, "also if" always
+            if (taken && !br.also) continue;
             if (this.truthy(this.eval(br.cond, scope))) {
               taken = true;
               const r = this.execBlock(br.body, scope);
               if (r.flow !== 'normal') return r;
               if (r.value !== undefined) last = r.value;
-              break;
             }
           }
           if (!taken && s.otherwise) {

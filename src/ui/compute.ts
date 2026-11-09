@@ -25,6 +25,8 @@ export function useCompute(ws: Worksheet, delay = 60, auto = true): ComputeState
   const sentWs = useRef<Worksheet | undefined>(undefined);
   const lastMsg = useRef(Date.now());
   const pendingSince = useRef<number | null>(null);
+  /** A newer request was sent while the worker was still busy with an older one. */
+  const superseded = useRef(false);
   const [manualTick, setManualTick] = useState(0);
 
   const spawn = () => {
@@ -35,6 +37,7 @@ export function useCompute(ws: Worksheet, delay = 60, auto = true): ComputeState
         if (e.data.id !== reqId.current) return;
         if (e.data.progress) { setState(s => ({ ...s, busy: true, progress: e.data.progress })); return; }
         pendingSince.current = null;
+        superseded.current = false;
         setState({ result: e.data.result ?? null, busy: false, error: e.data.error, computedWs: sentWs.current });
       };
       w.onerror = () => { pendingSince.current = null; setState(s => ({ ...s, busy: false, error: 'Berechnung abgebrochen' })); };
@@ -48,7 +51,9 @@ export function useCompute(ws: Worksheet, delay = 60, auto = true): ComputeState
     spawn();
     // watchdog: a single region running for a long time blocks newer requests → restart the worker
     const t = setInterval(() => {
-      if (pendingSince.current !== null && Date.now() - lastMsg.current > 3000 && Date.now() - pendingSince.current > 3000 && worker.current) {
+      // only when a newer request waits – a long calculation without newer input is left alone
+      if (superseded.current && pendingSince.current !== null && Date.now() - lastMsg.current > 3000 && Date.now() - pendingSince.current > 3000 && worker.current) {
+        superseded.current = false;
         worker.current.terminate();
         spawn();
         lastMsg.current = Date.now();
@@ -66,6 +71,7 @@ export function useCompute(ws: Worksheet, delay = 60, auto = true): ComputeState
     const t = setTimeout(() => {
       const id = ++reqId.current;
       sentWs.current = ws;
+      if (pendingSince.current !== null) superseded.current = true;
       pendingSince.current = Date.now();
       setState(s => ({ ...s, busy: true, progress: undefined }));
       if (worker.current) {

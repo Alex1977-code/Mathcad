@@ -94,7 +94,7 @@ export function MathRegionView({ region, result, editing, variables, showCheck, 
         ? <div className="math-view" dangerouslySetInnerHTML={{ __html: renderLatex(latex) }} />
         : <div className="math-view math-placeholder">{region.src.trim() ? region.src : 'leer'}</div>}
       {err && <div className="error-chip">{err.message}</div>}
-      {showCheck && result?.check && (
+      {showCheck && result?.check && result.check.status !== 'skipped' && (
         <span
           className={`check-badge ${result.check.status === 'match' ? 'ok' : 'bad'}`}
           title={result.check.status === 'match'

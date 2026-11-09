@@ -41,6 +41,8 @@ function scalarMatch(v: Val, e: ExpScalar, scale: number): boolean {
   if (!s) return false;
   // a dimensionless zero in Mathcad may come back without units
   if (!IGNORE_DIMS && !sameDims(s.dims, e.dims) && !(s.re === 0 && e.re === 0)) return false;
+  // with a display unit our value is the ratio value/unit, which must be dimensionless
+  if (IGNORE_DIMS && !sameDims(s.dims, [0, 0, 0, 0, 0, 0, 0, 0, 0]) && s.re !== 0) return false;
   const sc = Math.max(scale, Math.abs(e.re), Math.abs(e.im ?? 0));
   return close(s.re, e.re, sc) && close(s.im, e.im ?? 0, sc);
 }
@@ -72,10 +74,12 @@ function checkInner(v: Val, exp: Expected): CheckStatus {
   }
   const rows = matrixRows(v as Matrix);
   if (rows.length !== exp.rows || rows[0].length !== exp.cols) return 'mismatch';
+  // elements Mathcad stored in a form we cannot read: the result cannot be verified
+  if (exp.v.length < exp.rows * exp.cols || exp.v.some(x => !x)) return 'skipped';
   const scale = Math.max(0, ...exp.v.map(x => (x ? Math.abs(x.re) : 0)));
   for (let i = 0; i < exp.rows; i++) for (let j = 0; j < exp.cols; j++) {
     const e = exp.v[i * exp.cols + j];
-    if (!e) continue;
+    if (!e) return 'skipped';
     if (!scalarMatch(rows[i][j], e, scale)) return 'mismatch';
   }
   return 'match';

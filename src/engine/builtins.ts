@@ -199,6 +199,27 @@ export const BUILTINS: Record<string, Builtin> = {
   gamma: map1(x => gammaFn(toNumber(x))),
   erf: map1(x => math.erf(toNumber(x))),
   erfc: map1(x => erfc(toNumber(x))),
+  /** x ∈ set for the number sets ℕ, ℤ, ℚ, ℝ, ℂ (ℚ: fraction with a denominator up to 10⁴). */
+  elementOf: (args) => {
+    nargs('elementOf', args, 2);
+    const set = args[1];
+    if (typeof set !== 'string') throw new CalcError('elementOf(x, "ℤ") erwartet eine Zahlenmenge als Zeichenkette');
+    const test = (x: Val): number => {
+      if (isComplex(x)) { const c = x as Complex; if (c.im !== 0) return set === 'ℂ' ? 1 : 0; x = c.re; }
+      const v = siNum(x);
+      switch (set) {
+        case 'ℂ': case 'ℝ': return isFinite(v) ? 1 : 0;
+        case 'ℤ': return Number.isInteger(v) ? 1 : 0;
+        case 'ℕ': return Number.isInteger(v) && v >= 0 ? 1 : 0;
+        case 'ℚ': {
+          for (let q = 1; q <= 10000; q++) if (Math.abs(v * q - Math.round(v * q)) <= 1e-12 * Math.max(1, Math.abs(v * q))) return 1;
+          return 0;
+        }
+      }
+      throw new CalcError(`Unbekannte Zahlenmenge „${set}“`);
+    };
+    return isMatrix(args[0]) ? math.map(args[0] as Matrix, (x: unknown) => test(x as Val)) as Matrix : test(args[0]);
+  },
   Re: map1(x => (isComplex(x) ? (x as Complex).re : x)),
   Im: map1(x => (isComplex(x) ? (x as Complex).im : 0)),
   re: map1(x => (isComplex(x) ? (x as Complex).re : x)),
@@ -246,7 +267,7 @@ export const BUILTINS: Record<string, Builtin> = {
   },
   tr: (args) => { nargs('tr', args, 1); return math.trace(asMatrix(args[0])) as Val; },
   trace: (args) => { nargs('trace', args, 1); return math.trace(asMatrix(args[0])) as Val; },
-  det: (args) => { nargs('det', args, 1); return math.det(asMatrix(args[0])) as Val; },
+  det: (args) => { nargs('det', args, 1); return determinant(asMatrix(args[0])); },
   inverse: (args) => { nargs('inverse', args, 1); return math.inv(asMatrix(args[0])); },
   rank: (args) => { nargs('rank', args, 1); return matrixRank(asMatrix(args[0])); },
   transpose: (args) => { nargs('transpose', args, 1); return math.transpose(asMatrix(args[0])); },
@@ -573,6 +594,34 @@ function hyper(m: number, a: number, b: number, n: number): number {
   return Math.exp(lc(a, m) + lc(b, n - m) - lc(a + b, n));
 }
 function lgammaN(x: number): number { return lgamma(x); }
+
+/** Determinant; plain numeric matrices via LU with partial pivoting (no NaN from overflowing intermediate values). */
+export function determinant(m: Matrix): Val {
+  const s = m.size();
+  if (s.length !== 2 || s[0] !== s[1]) throw new CalcError('Determinante nur für quadratische Matrizen');
+  const rows = matrixRows(m);
+  if (!rows.every(r => r.every(x => typeof x === 'number'))) return math.det(m) as Val;
+  const n = s[0];
+  const A = rows.map(r => (r as number[]).slice());
+  let logAbs = 0, sign = 1;
+  for (let c = 0; c < n; c++) {
+    let p = c;
+    for (let r = c + 1; r < n; r++) if (Math.abs(A[r][c]) > Math.abs(A[p][c])) p = r;
+    if (A[p][c] === 0) return 0;
+    if (p !== c) { [A[p], A[c]] = [A[c], A[p]]; sign = -sign; }
+    const piv = A[c][c];
+    if (piv < 0) sign = -sign;
+    logAbs += Math.log(Math.abs(piv));
+    for (let r = c + 1; r < n; r++) {
+      const f = A[r][c] / piv;
+      if (f === 0) continue;
+      for (let k = c; k < n; k++) A[r][k] -= f * A[c][k];
+    }
+  }
+  // exact product for moderate values, otherwise via the logarithm (may give ±∞)
+  if (logAbs < 700) { let d = sign; for (let c = 0; c < n; c++) d *= Math.abs(A[c][c]); return d; }
+  return sign * Math.exp(logAbs);
+}
 
 /** Γ(x) with an error at the poles 0, −1, −2, … */
 function gammaFn(x: number): number {
@@ -910,3 +959,6 @@ export const CONSTANTS: Record<string, () => Val> = {
 export const BUILTIN_NAMES = [...Object.keys(BUILTINS), ...Object.keys(LAZY_BUILTINS), 'sum', 'prod', 'int', 'deriv', 'nthroot', 'vec', 'col'].sort();
 
 export function isBuiltinFunction(name: string) { return name in BUILTINS || name in LAZY_BUILTINS; }
+
+// lookup tables without prototype: names like "toString" or "__proto__" are not functions/constants
+for (const t of [BUILTINS, LAZY_BUILTINS, PHYS_CONSTANTS, CONSTANTS]) Object.setPrototypeOf(t, null);
