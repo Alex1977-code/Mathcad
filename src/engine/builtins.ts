@@ -7,7 +7,7 @@ import {
   toInt, toNumber, rangeValues, type FnVal, type Val,
 } from './values';
 import { cross3 as crossFn } from './evaluator';
-import { mkQ, qSum, withValue } from './quantity';
+import { hasOffset, mkQ, qSum, withValue } from './quantity';
 import { brent, pnormStd, qnormStd, rootFromGuess, solveSystem } from './numeric';
 import { DISTRIBUTIONS, distFunction, distRandom, percentile, setStatsSeed } from './stats';
 
@@ -594,10 +594,12 @@ function variance(e: Val[], sample: boolean): Val {
     const m = xs.reduce((a, b) => a + b, 0) / n;
     return xs.reduce((a, b) => a + (b - m) ** 2, 0) / (sample ? n - 1 : n);
   }
-  if (e.every(x => isUnit(x) && typeof (x as unknown as { value: unknown }).value === 'number')) {
-    const xs = e.map(x => (x as unknown as { value: number }).value);
-    const d = (e[0] as unknown as { dimensions: number[] }).dimensions;
-    if (e.every(x => (x as unknown as { dimensions: number[] }).dimensions.every((v, i) => v === d[i]))) {
+  // quantities (a plain 0 is compatible with every unit)
+  const firstU = e.find(x => isUnit(x));
+  if (firstU && e.every(x => x === 0 || (isUnit(x) && typeof (x as unknown as { value: unknown }).value === 'number' && !hasOffset(x as unknown as Unit)))) {
+    const xs = e.map(x => (x === 0 ? 0 : (x as unknown as { value: number }).value));
+    const d = (firstU as unknown as { dimensions: number[] }).dimensions;
+    if (e.every(x => x === 0 || (x as unknown as { dimensions: number[] }).dimensions.every((v, i) => v === d[i]))) {
       const m = xs.reduce((a, b) => a + b, 0) / n;
       return mkQ(xs.reduce((a, b) => a + (b - m) ** 2, 0) / (sample ? n - 1 : n), d.map(v => 2 * v));
     }

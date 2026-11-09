@@ -116,6 +116,11 @@ export class Evaluator {
           step = e >= s ? 1 : -1;
         }
         for (const x of [start, end, step]) if (!(typeof x === 'number' || isUnit(x))) throw new CalcError('Bereichsgrenzen müssen reelle Zahlen sein');
+        {
+          const dimOf = (x: number | Unit) => (isUnit(x) ? (x as Unit).dimensions.join(',') : '');
+          const ds = [start, end, ...(n.second ? [step] : [])].filter(x => !(x === 0)).map(dimOf);
+          if (ds.some(d => d !== ds[0])) throw new CalcError('Bereichsgrenzen haben unterschiedliche Einheiten');
+        }
         return { kind: 'range', start, step, end } as RangeVal;
       }
       case 'iter': return this.evalIter(n, scope, vec);

@@ -400,3 +400,29 @@ describe('Befunde der Testagenten: Parser & Format', () => {
     expect(last(['f(y) :=\n  if(y>0)\n    1\n  else\n    2', 'f(3) ='])).toBe('1');
   });
 });
+
+describe('Befunde der Testagenten: Einheiten', () => {
+  it('°C mit anderen Einheiten unabhängig von der Reihenfolge', () => {
+    expect(last(['20 °C * 1 W/K ='])).toBe('293.15 W');
+    expect(last(['1 W/K * 20 °C ='])).toBe('293.15 W');
+  });
+  it('ungerade Wurzeln negativer Größen bleiben reell', () => {
+    expect(last(['(-8 m^3)^(1/3) ='])).toBe('-2 m');
+  });
+  it('Bereichsgrenzen mit unterschiedlichen Einheiten', () => {
+    expect(run(['i := 1 m..5 s'])[0].error?.message).toMatch(/Einheiten/);
+  });
+  it('stdev mit 0 zwischen Größen, Anzeige in % und S', () => {
+    expect(last(['stdev([0; 1 m; 2 m]) ='])).toBe('0.816 m');
+    expect(last(['x := 0.5', 'x = %'])).toBe('50');
+    expect(last(['1/(5 Ω) ='])).toBe('0.2 S');
+  });
+  it('zusätzliche Einheiten', () => {
+    expect(last(['1 cal = J'])).toBe('4.187');
+    expect(last(['1 nmi = m'])).toBe('1852');
+    expect(last(['1 Bq*1 s ='])).toBe('1');
+    expect(last(['1 Gy = J/kg'])).toBe('1');
+    expect(last(['1 inHg = Pa'])).toBe('3386.389');
+    expect(last(['5 Δ°C = K'])).toBe('5');
+  });
+});

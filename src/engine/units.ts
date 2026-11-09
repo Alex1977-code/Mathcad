@@ -26,6 +26,15 @@ const extra: [string, string][] = [
   ['ha', '10000 m^2'],
   ['gauss', '1e-4 T'],
   ['pascal', '1 Pa'],
+  ['cal', '4.1868 J'],
+  ['Bq', '1 s^-1'],
+  ['Gy', '1 J/kg'],
+  ['Sv', '1 J/kg'],
+  ['nmi', '1852 m'],
+  ['inHg', '3386.389 Pa'],
+  ['mmHg_', '133.322387415 Pa'],
+  ['deltaDegC', '1 K'],
+  ['deltaDegF', '0.5555555555555556 K'],
 ];
 for (const [name, def] of extra) {
   try { math.createUnit(name, def, { override: true }); } catch { /* ignore */ }
@@ -39,7 +48,7 @@ export const ANGLE_UNITS: Record<string, number> = {
   rad: 1, radian: 1, deg: Math.PI / 180, '°': Math.PI / 180, degree: Math.PI / 180,
   grad: Math.PI / 200, gon: Math.PI / 200, rev: 2 * Math.PI, sr: 1, mrad: 1e-3,
   arcmin: Math.PI / 10800, arcsec: Math.PI / 648000,
-  pct: 0.01, percent: 0.01, '‰': 0.001, permille: 0.001,
+  pct: 0.01, percent: 0.01, '%': 0.01, '‰': 0.001, permille: 0.001,
 };
 /** Dimensionless or angular units with a non-trivial factor that should still be offered for display. */
 export const SCALAR_UNITS: Record<string, number> = {
@@ -59,6 +68,7 @@ const ALIASES: Record<string, string> = {
   'candela': 'cd', 'watt': 'W', 'joule': 'J', 'newton': 'N', 'volt': 'V', 'ohm': 'ohm',
   'coulomb': 'C', 'farad': 'F', 'henry': 'H', 'tesla': 'T', 'weber': 'Wb', 'siemens': 'S', 'hertz': 'Hz',
   'gram': 'g', 'liter_': 'L',
+  'Δ°C': 'deltaDegC', 'Δ°F': 'deltaDegF', 'ΔK': 'K',
 };
 
 /** Names that are units in mathjs but are commonly used as variables; still units unless defined. */

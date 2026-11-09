@@ -66,7 +66,12 @@ export function hasOffset(u: Unit): boolean {
 /** A quantity with SI value `value` and dimension vector `dims` (plain number if dimensionless). */
 export function mkQ(value: number, dims: number[]): Unit | number {
   let zero = true;
-  for (let i = 0; i < N; i++) if (dims[i]) { zero = false; break; }
+  for (let i = 0; i < N; i++) {
+    const x = dims[i];
+    // remove floating point residue from fractional powers: 0.5·2 = 0.9999999999999999
+    if (x && Math.abs(x - Math.round(x)) < 1e-9) dims[i] = Math.round(x);
+    if (dims[i]) zero = false;
+  }
   if (zero) return value;
   const u = Object.create(QProto) as U;
   u.value = value;
@@ -87,6 +92,12 @@ export function qParts(x: unknown): { v: number; d: number[] | null } | null {
   return null;
 }
 
+function absParts(u: U): { v: number; d: number[] | null } | null {
+  if (typeof u.value !== 'number') return null;
+  const si = (u as unknown as Unit).toSI() as unknown as U;
+  return typeof si.value === 'number' ? { v: si.value, d: si.dimensions } : null;
+}
+
 const ZERO = [0, 0, 0, 0, 0, 0, 0, 0, 0];
 
 export function sameDims(a: number[] | null, b: number[] | null): boolean {
@@ -99,10 +110,14 @@ export class UnitMismatch extends Error {}
 
 /** Fast scalar operation; returns undefined if the operands need the general path. */
 export function qBinary(op: string, a: unknown, b: unknown): unknown {
-  const pa = qParts(a);
-  if (!pa) return undefined;
-  const pb = qParts(b);
-  if (!pb) return undefined;
+  let pa = qParts(a);
+  let pb = qParts(b);
+  // °C/°F multiplied with or divided by another quantity: absolute temperature (independent of the order)
+  if ((op === '*' || op === '/') && isUnitFast(a) && isUnitFast(b)) {
+    pa ??= absParts(a as U);
+    pb ??= absParts(b as U);
+  }
+  if (!pa || !pb) return undefined;
   if (!pa.d && !pb.d) return undefined; // plain numbers are handled by the caller
   switch (op) {
     case '*': {
@@ -149,10 +164,16 @@ export function qBinary(op: string, a: unknown, b: unknown): unknown {
 export function qPow(a: unknown, p: number): unknown {
   const pa = qParts(a);
   if (!pa || !pa.d) return undefined;
-  if (pa.v < 0 && !Number.isInteger(p)) return undefined;
+  let v: number;
+  if (pa.v < 0 && !Number.isInteger(p)) {
+    // odd roots of negative quantities stay real: (-8 m³)^(1/3) = -2 m
+    const inv = 1 / p;
+    if (Math.abs(inv - Math.round(inv)) < 1e-12 && Math.round(inv) % 2 !== 0) v = -Math.pow(-pa.v, p);
+    else return undefined;
+  } else v = Math.pow(pa.v, p);
   const d = new Array(N);
   for (let i = 0; i < N; i++) d[i] = (pa.d[i] ?? 0) * p;
-  return mkQ(Math.pow(pa.v, p), d);
+  return mkQ(v, d);
 }
 
 export function qNeg(a: unknown): unknown {

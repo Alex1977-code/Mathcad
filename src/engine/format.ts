@@ -115,7 +115,7 @@ export function siUnitFactors(dims: number[]): UnitFactors {
       const rest = d.map((x, i) => x - p * dv.dims[i]);
       // never introduce a mass dimension that the quantity does not have (m/s² instead of N/kg)
       if (d[0] === 0 && rest[0] !== 0) continue;
-      const c = cost(rest, Math.abs(p) === 1 ? 1 : 1.5) + (rest[2] !== 0 ? 0.5 : 0);
+      const c = cost(rest, p === 1 ? 1 : p === -1 ? 1.01 : 1.5) + (rest[2] !== 0 ? 0.5 : 0);
       if (c < best.c - 1e-9) best = { sym: p === 1 ? dv.sym : `${dv.sym}^${p}`, rest, c };
     }
   }

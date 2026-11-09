@@ -206,8 +206,13 @@ class Parser {
       if (this.eat('*') || this.eat('·')) a = { k: 'bin', op: '*', a, b: this.parseUnary() };
       else if (this.eat('×')) a = { k: 'bin', op: 'cross', a, b: this.parseUnary() };
       else if (this.eat('/')) a = { k: 'bin', op: '/', a, b: this.parseUnary() };
-      else if (this.startsImplicitOperand()) a = { k: 'bin', op: '*', a, b: this.parsePow(), implicit: true };
-      else return a;
+      else if (this.startsImplicitOperand()) {
+        const b = this.parsePow();
+        // "k·20 °C": the temperature unit belongs to the number directly before it
+        if (b.k === 'id' && TEMP_UNITS.has(b.name) && a.k === 'bin' && (a.op === '*' || a.op === '/') && !a.implicit && a.b.k === 'num') {
+          a = { ...a, b: { k: 'bin', op: '*', a: a.b, b, implicit: true } };
+        } else a = { k: 'bin', op: '*', a, b, implicit: true };
+      } else return a;
     }
   }
   /** Can the next token start an operand that is implicitly multiplied? */
@@ -466,6 +471,7 @@ function parseTarget(src: string): DefTarget {
   return target;
 }
 
+const TEMP_UNITS = new Set(['°C', '°F', 'degC', 'degF']);
 const RESERVED = new Set(['and', 'or', 'xor', 'not', 'if', 'else', 'for', 'while', 'return', 'break', 'continue', 'otherwise']);
 
 function at<T>(offset: number, fn: () => T): T {
