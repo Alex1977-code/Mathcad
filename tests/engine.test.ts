@@ -672,3 +672,37 @@ describe('Weitere Mathcad-Funktionen (Sollwerte aus Mathcad-Prime-Dateien)', () 
     expect(last(['A[0, 0] ='])).toMatch(/„A“ ist nicht definiert/);
   });
 });
+
+describe('Spline2, Eigenvektoren, Grubbs mit Matrix (Sollwerte aus Mathcad-Prime-Dateien)', () => {
+  const arr = (m: Val) => (isMatrix(m) ? (m as Matrix).toArray().flat() as number[] : [m as number]).map(x => si(x as Val));
+  const close = (a: number[], b: number[], d = 6) => { expect(a.length).toBe(b.length); a.forEach((x, i) => expect(x).toBeCloseTo(b[i], d)); };
+  const data = ['i := 1..12', 'x[i] := i', 'y := [3; 2.5; 2; 1.5; 1.5; 2; 4; 6; 10; 14; 18; 22; 26]'];
+  it('Spline2: Knoten, Koeffizienten, s, DWS und DW-Wahrscheinlichkeiten wie Mathcad (spline2.mcdx)', () => {
+    close(arr(lastVal([...data, 'b := Spline2(x, y, 3) ='])), [4, 2, 0, 6, 12, 3.0107155313442027, 2.266616204621199, -3.22886996454106,
+      19.080968518973513, 25.903572674201346, 0.2049183563759975, 0, 3.1093975721562535, 0.9999965285733884, 0.7690393353630082], 7);
+    expect(si(lastVal([...data, 'b := Spline2(x, y, 3)', 'DWS(b) =']))).toBeCloseTo(3.1093975721562535, 10);
+  });
+  it('Spline2 mit vorgegebenen Knoten (spline2B.mcdx: Mathcads eigene Daten)', () => {
+    const y = 'y := [4.958266; 4.471956; 5.103357; 5.636883; 5.138256; 5.556894; 5.778683; 5.880549; 6.065064; 6.161834; 6.074612; 5.947434; 6.302823; 5.856911; 6.022163; 5.825013; 6.075476; 5.709208; 5.578048; 5.401707; 5.418016; 5.247613; 5.149524; 4.990218; 4.574428; 4.380219; 4.343318; 4.211437; 3.98419; 4.025082; 4.096838]';
+    const v = arr(lastVal(['i := 0..30', 'x[i] := i/3', y, 's := Spline2(x, y, 3, [0; 5; 10]) =']));
+    expect(v.slice(0, 5)).toEqual([4, 2, 0, 5, 10]);
+    expect(v.length).toBe(15);
+  });
+  it('Binterp: Wert und Ableitungen 1–3 (gegen scipy)', () => {
+    close(arr(lastVal([...data, 'b := Spline2(x, y, 3)', 'Binterp(3, b) ='])), [1.511205587994521, -0.25449967716214894, 0.41230728377592285, 0.24874930336187095], 6);
+  });
+  it('genvecs: linke Eigenvektoren, größte Komponente = 1, deterministisch (matrices.mcdx)', () => {
+    const M = 'M := [7.5, 12, 5.5, 5.5, 8.5, 4; 5.5, 8.5, 4, 7.5, 12, 5; 7.5, 12, 5.5, 7.5, 12, 5.5; 5.5, 8.5, 4, 4.5, 7.5, 4; 5.5, 9, 4.5, 5, 8, 4; 5.5, 8.5, 3.5, 7, 11, 4.5]';
+    const N = 'N := [9, 13, 6.5, 6.5, 9.5, 5; 5.5, 9, 4, 7.5, 10, 5; 7.5, 12, 6, 7.5, 12, 5.5; 5.5, 8.5, 6, 5, 7.5, 4; 9.5, 3, 4.5, 3, 2.5, 4; 3, 4.5, 3.5, 7, 11, 5]';
+    const a = arr(lastVal([M, N, 'genvecs(M, N, "L") =']));
+    const first = [1, 0.533319, -1, -0.188666, -0.441702, 0.36387];
+    // column by column up to the sign (Mathcad's sign comes from LAPACK)
+    for (let j = 0; j < 6; j++) { const sg = Math.sign(a[j]) * Math.sign(first[j]); expect(a[j] * sg).toBeCloseTo(first[j], 5); }
+    close(arr(lastVal([M, N, 'genvecs(M, N, "L") ='])), a, 9); // same signs in every run
+  });
+  it('Grubbs mit Matrix: Index [Zeile; Spalte] (grubbs.mcdx)', () => {
+    const d = ['v := [12.1; 11.8; 12.4; 12.0; 11.9; 12.3; 12.2; 11.7; 12.5; 12.1; 11.95; 12.05; 12.35; 11.85; 12.15; 12.25; 11.75; 12.45; 12.6; 13.3]', 'i := 0..19', 'x[i] := i'];
+    expect(last([...d, 'A := Grubbs(augment(x, v), 0.95)', 'A[0, 0] ='])).toBe('[0; 0]');
+    expect(last([...d, 'C := Grubbs(augment(v, x), 0.95)', 'C[0, 0] ='])).toBe('[0; 1]');
+  });
+});

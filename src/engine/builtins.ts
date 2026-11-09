@@ -325,9 +325,20 @@ export const BUILTINS: Record<string, Builtin> = {
   genvals: (args) => { nargs('genvals', args, 2); const r = math.eigs(math.multiply(math.inv(asMatrix(args[1])), asMatrix(args[0])) as Matrix); return column(sortEig(toArr(r.values))); },
   genvecs: (args) => {
     nargs('genvecs', args, 2, 3);
-    const r = math.eigs(math.multiply(math.inv(asMatrix(args[1])), asMatrix(args[0])) as Matrix);
+    // "L": left eigenvectors yᵀM = λ yᵀN, i.e. eigenvectors of (Nᵀ)⁻¹Mᵀ; otherwise right ones of N⁻¹M
+    const left = args[2] !== undefined && String(args[2]).toUpperCase() === 'L';
+    const A = asMatrix(args[0]), B = asMatrix(args[1]);
+    const r = math.eigs((left ? math.multiply(math.inv(math.transpose(B)), math.transpose(A)) : math.multiply(math.inv(B), A)) as Matrix);
     const re = (x: Val) => (isComplex(x) ? (x as Complex).re : x as number);
-    const pairs = r.eigenvectors.map(e => ({ v: e.value as unknown as Val, vec: normVec(toArr(e.vector)) })).sort((a, b) => re(b.v) - re(a.v));
+    // normalised as LAPACK (dggev) and Mathcad: the largest component has magnitude 1
+    // sign fixed as for eigenvecs (largest component positive, last one on ties): the iteration starts randomly
+    const maxNorm = (v: Val[]) => {
+      let k = 0;
+      v.forEach((x, i) => { if (Math.abs(re(x)) >= Math.abs(re(v[k])) - 1e-9) k = i; });
+      const m = Math.abs(re(v[k])) * (re(v[k]) < 0 ? -1 : 1);
+      return m !== 0 ? v.map(x => (isComplex(x) ? math.divide(x as Complex, m) as Val : (x as number) / m)) : v;
+    };
+    const pairs = r.eigenvectors.map(e => ({ v: e.value as unknown as Val, vec: maxNorm(toArr(e.vector)) })).sort((a, b) => re(b.v) - re(a.v));
     const vecs = pairs.map(p => p.vec);
     return makeMatrix(vecs[0].map((_, i) => vecs.map(v => v[i])));
   },

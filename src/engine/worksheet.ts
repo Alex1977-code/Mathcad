@@ -149,6 +149,7 @@ export class WorksheetEngine {
       pendingGuesses: this.pendingGuesses.slice(),
       randomVars: new Set(this.randomVars),
       iterativeVars: new Set(this.iterativeVars),
+      eigenVars: new Set(this.eigenVars),
       definedBy: new Map(this.definedBy),
       rng: [getRandomState(), getStatsSeed()],
     };
@@ -162,6 +163,7 @@ export class WorksheetEngine {
     this.pendingGuesses = s.pendingGuesses.slice();
     this.randomVars = new Set(s.randomVars);
     this.iterativeVars = new Set(s.iterativeVars);
+    this.eigenVars = new Set(s.eigenVars);
     this.definedBy = new Map(s.definedBy);
     resetRandom(s.rng[0]);
     setStatsSeed(s.rng[1]);
@@ -362,13 +364,15 @@ export class WorksheetEngine {
     }
     const exp = r.imported?.expected;
     if (usesIterative(p, this.iterativeVars) && p.kind === 'define') for (const n of definedNames(p)) this.iterativeVars.add(n);
+    const eigen = usesEigenvectors(p, this.eigenVars);
+    if (eigen && p.kind === 'define') for (const n of definedNames(p)) this.eigenVars.add(n);
     const random = usesRandom(p) || refsAny(p, this.randomVars);
     if (random && p.kind === 'define') for (const n of definedNames(p)) this.randomVars.add(n);
     const shows = (p.kind === 'eval' || (p.kind === 'define' && !!p.show)) && !random;
     if (exp && shows) {
       const val = this.lastValue;
       const withUnit = (p.kind === 'eval' && !!p.unit) || (p.kind === 'define' && !!p.show?.unit);
-      res.check = { status: res.error || val === undefined ? 'mismatch' : checkResult(val, exp, withUnit ? this.lastUnitDims ?? undefined : undefined, usesIterative(p, this.iterativeVars)), expected: expectedToText(exp, this.fmt.decimals + 1) };
+      res.check = { status: res.error || val === undefined ? 'mismatch' : checkResult(val, exp, withUnit ? this.lastUnitDims ?? undefined : undefined, usesIterative(p, this.iterativeVars), eigen), expected: expectedToText(exp, this.fmt.decimals + 1) };
     }
     if (r.imported?.symbolic) {
       try { res.symbolicLatex = toLatex(parseExpression(r.imported.symbolic), this.latexCtx(scope)); } catch { /* ignore */ }
@@ -419,6 +423,8 @@ export class WorksheetEngine {
   randomVars = new Set<string>();
   /** Variables computed by iterative numerical methods (compared with Mathcad's TOL). */
   iterativeVars = new Set<string>();
+  /** Variables depending on eigenvectors (their sign is arbitrary: compared column by column up to ±1). */
+  eigenVars = new Set<string>();
 
   formatResult(res: RegionResult, v: Val, unitNode: Node | undefined, scope: Scope) {
     this.lastValue = v;
@@ -577,6 +583,13 @@ function usesRandom(p: MathStmt): boolean {
   return found;
 }
 
+function usesEigenvectors(p: MathStmt, vars: Set<string>): boolean {
+  let found = false;
+  const e = p.kind === 'define' || p.kind === 'eval' || p.kind === 'expr' ? p.expr : null;
+  if (e) walk(e, (x) => { if (x.k === 'call' && ['eigenvec', 'eigenvecs', 'genvecs'].includes(x.name)) found = true; });
+  return found || refsAny(p, vars);
+}
+
 function usesIterative(p: MathStmt, vars: Set<string>): boolean {
   let found = false;
   const e = p.kind === 'define' || p.kind === 'eval' || p.kind === 'expr' ? p.expr : null;
@@ -612,6 +625,7 @@ export interface EngineSnapshot {
   pendingGuesses: { name: string; expr: Node }[];
   randomVars: Set<string>;
   iterativeVars: Set<string>;
+  eigenVars: Set<string>;
   definedBy: Map<string, string>;
   rng: [number, number];
 }

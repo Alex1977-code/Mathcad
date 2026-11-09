@@ -3,6 +3,7 @@ import type { Complex, Matrix, Unit } from 'mathjs';
 import type { ExpScalar, Expected } from './model';
 import { isComplex, isMatrix, isRange, isUnit, makeMatrix, matrixRows, rangeValues, type Val } from './values';
 import { formatReal, siUnitFactors, unitFactorsText } from './format';
+import { math } from './units';
 
 export type CheckStatus = 'match' | 'mismatch' | 'skipped';
 
@@ -36,6 +37,8 @@ function sameDims(a: number[], b: number[]): boolean {
 
 /** Dimensions of the display unit, when the result is shown in one (the value compared is value/unit). */
 let UNIT_DIMS: number[] | null = null;
+let SIGN_FREE = false;
+const negate = (v: Val): Val => (typeof v === 'number' ? -v : isComplex(v) ? { re: -(v as Complex).re, im: -(v as Complex).im } as unknown as Val : isUnit(v) ? math.unaryMinus(v as Unit) as unknown as Val : v);
 
 function scalarMatch(v: Val, e: ExpScalar, scale: number): boolean {
   const s = scalarOf(v);
@@ -57,11 +60,16 @@ function scalarMatch(v: Val, e: ExpScalar, scale: number): boolean {
  * @param iterative results of iterative numerical methods (Find, root, integrals) are compared with
  *   Mathcad's own convergence tolerance TOL = 10⁻³ instead of 10⁻⁴.
  */
-export function checkResult(v: Val, exp: Expected, unitDims?: number[], iterative = false): CheckStatus {
+/**
+ * @param signFree results built from eigenvectors: an eigenvector is only determined up to its sign (Mathcad
+ *   takes it from the LAPACK internals), so each column may match with the factor +1 or −1.
+ */
+export function checkResult(v: Val, exp: Expected, unitDims?: number[], iterative = false, signFree = false): CheckStatus {
   if (isRange(v)) v = makeMatrix(rangeValues(v).map(x => [x]));
   UNIT_DIMS = unitDims ?? null;
+  SIGN_FREE = signFree;
   REL = iterative ? 1e-3 : 1e-4;
-  try { return checkInner(v, exp); } finally { UNIT_DIMS = null; REL = 1e-4; }
+  try { return checkInner(v, exp); } finally { UNIT_DIMS = null; REL = 1e-4; SIGN_FREE = false; }
 }
 
 function checkInner(v: Val, exp: Expected): CheckStatus {
@@ -83,10 +91,17 @@ function checkInner(v: Val, exp: Expected): CheckStatus {
   // elements Mathcad stored in a form we cannot read: the result cannot be verified
   if (exp.v.length < exp.rows * exp.cols || exp.v.some(x => !x)) return 'skipped';
   const scale = Math.max(0, ...exp.v.map(x => (x ? Math.abs(x.re) : 0)));
-  for (let i = 0; i < exp.rows; i++) for (let j = 0; j < exp.cols; j++) {
-    const e = exp.v[i * exp.cols + j];
-    if (!e) return 'skipped';
-    if (!scalarMatch(rows[i][j], e, scale)) return 'mismatch';
+  for (let j = 0; j < exp.cols; j++) {
+    const colOk = (sign: number) => {
+      for (let i = 0; i < exp.rows; i++) {
+        const e = exp.v[i * exp.cols + j];
+        if (!e) return false;
+        if (!scalarMatch(sign > 0 ? rows[i][j] : negate(rows[i][j]), e, scale)) return false;
+      }
+      return true;
+    };
+    if (exp.v.some(x => !x)) return 'skipped';
+    if (!colOk(1) && !(SIGN_FREE && colOk(-1))) return 'mismatch';
   }
   return 'match';
 }
