@@ -2,16 +2,25 @@
 import { CalcError } from './values';
 import { pnormStd, qnormStd } from './numeric';
 
-const LANCZOS = [0.99999999999980993, 676.5203681218851, -1259.1392167224028, 771.32342877765313,
-  -176.61503916999185, 12.507343278686905, -0.13857109526572012, 9.9843695780195716e-6, 1.5056327351493116e-7];
+// Lanczos approximation (Numerical Recipes, 3rd ed.), relative accuracy ≈ 1e-15
+const COF = [57.1562356658629235, -59.5979603554754912, 14.1360979747417471, -0.491913816097620199,
+  0.339946499848118887e-4, 0.465236289270485756e-4, -0.983744753048795646e-4, 0.158088703224912494e-3,
+  -0.210264441724104883e-3, 0.217439618115212643e-3, -0.164318106536763890e-3, 0.844182239838527433e-4,
+  -0.261908384015814087e-4, 0.368991826595316234e-5];
+const LFACT: number[] = [0];
+for (let i = 1; i <= 170; i++) LFACT[i] = LFACT[i - 1] + Math.log(i);
 
+/** ln|Γ(x)|. */
 export function lgamma(x: number): number {
+  // exact for integers (factorials)
+  if (Number.isInteger(x) && x >= 1 && x <= 171) return LFACT[x - 1];
   if (x < 0.5) return Math.log(Math.PI / Math.abs(Math.sin(Math.PI * x))) - lgamma(1 - x);
-  x -= 1;
-  let a = LANCZOS[0];
-  const t = x + 7.5;
-  for (let i = 1; i < 9; i++) a += LANCZOS[i] / (x + i);
-  return 0.5 * Math.log(2 * Math.PI) + (x + 0.5) * Math.log(t) - t + Math.log(a);
+  let y = x;
+  let tmp = x + 5.24218750000000000;
+  tmp = (x + 0.5) * Math.log(tmp) - tmp;
+  let ser = 0.999999999999997092;
+  for (let j = 0; j < 14; j++) ser += COF[j] / ++y;
+  return tmp + Math.log(2.5066282746310005 * ser / x);
 }
 
 /** Regularized lower incomplete gamma P(a, x). */
@@ -19,14 +28,20 @@ export function gammaP(a: number, x: number): number {
   if (x <= 0) return 0;
   if (x < a + 1) {
     let sum = 1 / a, del = sum, ap = a;
-    for (let n = 0; n < 1000; n++) { ap++; del *= x / ap; sum += del; if (Math.abs(del) < Math.abs(sum) * 1e-16) break; }
+    for (let n = 0; n < 200000; n++) { ap++; del *= x / ap; sum += del; if (Math.abs(del) < Math.abs(sum) * 1e-16) break; }
     return sum * Math.exp(-x + a * Math.log(x) - lgamma(a));
   }
   return 1 - gammaQcf(a, x);
 }
+/** Regularized upper incomplete gamma Q(a, x) = 1 − P(a, x) without cancellation for large x. */
+export function gammaQ(a: number, x: number): number {
+  if (x <= 0) return 1;
+  if (x < a + 1) return 1 - gammaP(a, x);
+  return gammaQcf(a, x);
+}
 function gammaQcf(a: number, x: number): number {
   let b = x + 1 - a, c = 1 / 1e-300, d = 1 / b, h = d;
-  for (let i = 1; i < 1000; i++) {
+  for (let i = 1; i < 200000; i++) {
     const an = -i * (i - a);
     b += 2;
     d = an * d + b; if (Math.abs(d) < 1e-300) d = 1e-300;
@@ -45,7 +60,7 @@ function betacf(a: number, b: number, x: number): number {
   if (Math.abs(d) < 1e-300) d = 1e-300;
   d = 1 / d;
   let h = d;
-  for (let m = 1; m <= 1000; m++) {
+  for (let m = 1; m <= 100000; m++) {
     const m2 = 2 * m;
     let aa = m * (b - m) * x / ((qam + m2) * (a + m2));
     d = 1 + aa * d; if (Math.abs(d) < 1e-300) d = 1e-300;
@@ -92,6 +107,12 @@ function invert(cdf: (x: number) => number, p: number, lo: number, hi: number, d
   return (lo + hi) / 2;
 }
 
+/** k·ln(p) with 0·ln(0) = 0. */
+const xlog = (k: number, p: number) => (k === 0 ? 0 : k * Math.log(p));
+/** Density at the end of the support: x^(e) behaviour with value c for e = 0. */
+const edge = (e: number, c: number) => (e < 0 ? Infinity : e === 0 ? c : 0);
+const isInt = (k: number) => k === Math.floor(k);
+
 const lchoose = (n: number, k: number) => lgamma(n + 1) - lgamma(k + 1) - lgamma(n - k + 1);
 
 let seed = 1;
@@ -124,70 +145,75 @@ export const DISTRIBUTIONS: Record<string, Dist> = {
   },
   exp: {
     d: (x, r) => (x < 0 ? 0 : r * Math.exp(-r * x)),
-    p: (x, r) => (x < 0 ? 0 : 1 - Math.exp(-r * x)),
-    q: (p, r) => -Math.log(1 - p) / r,
+    p: (x, r) => (x < 0 ? 0 : -Math.expm1(-r * x)),
+    q: (p, r) => -Math.log1p(-p) / r,
   },
   gamma: {
-    d: (x, s) => (x <= 0 ? 0 : Math.exp((s - 1) * Math.log(x) - x - lgamma(s))),
+    d: (x, s) => (x < 0 ? 0 : x === 0 ? edge(s - 1, 1) : Math.exp((s - 1) * Math.log(x) - x - lgamma(s))),
     p: (x, s) => gammaP(s, x),
     lo: () => 0, hi: (s) => s * 10 + 10,
   },
   chisq: {
-    d: (x, k) => (x <= 0 ? 0 : Math.exp((k / 2 - 1) * Math.log(x) - x / 2 - (k / 2) * Math.LN2 - lgamma(k / 2))),
+    d: (x, k) => (x < 0 ? 0 : x === 0 ? edge(k / 2 - 1, 0.5) : Math.exp((k / 2 - 1) * Math.log(x) - x / 2 - (k / 2) * Math.LN2 - lgamma(k / 2))),
     p: (x, k) => gammaP(k / 2, x / 2),
     lo: () => 0, hi: (k) => k * 10 + 10,
   },
   t: {
     d: (x, n) => Math.exp(lgamma((n + 1) / 2) - lgamma(n / 2) - 0.5 * Math.log(n * Math.PI) - ((n + 1) / 2) * Math.log(1 + x * x / n)),
-    p: (x, n) => { const ib = betaI(n / (n + x * x), n / 2, 0.5); return x >= 0 ? 1 - ib / 2 : ib / 2; },
+    p: (x, n) => {
+      // near 0 the complementary form avoids the cancellation in 1 − I
+      if (x * x < n) { const ic = betaI(x * x / (n + x * x), 0.5, n / 2); return x >= 0 ? 0.5 + ic / 2 : 0.5 - ic / 2; }
+      const ib = betaI(n / (n + x * x), n / 2, 0.5);
+      return x >= 0 ? 1 - ib / 2 : ib / 2;
+    },
     lo: () => -10, hi: () => 10,
   },
   F: {
-    d: (x, d1, d2) => (x <= 0 ? 0 : Math.exp(0.5 * (d1 * Math.log(d1 * x) + d2 * Math.log(d2) - (d1 + d2) * Math.log(d1 * x + d2)) - Math.log(x) - (lgamma(d1 / 2) + lgamma(d2 / 2) - lgamma((d1 + d2) / 2)))),
+    d: (x, d1, d2) => (x < 0 ? 0 : x === 0 ? edge(d1 / 2 - 1, 1) : Math.exp(0.5 * (d1 * Math.log(d1 * x) + d2 * Math.log(d2) - (d1 + d2) * Math.log(d1 * x + d2)) - Math.log(x) - (lgamma(d1 / 2) + lgamma(d2 / 2) - lgamma((d1 + d2) / 2)))),
     p: (x, d1, d2) => (x <= 0 ? 0 : betaI(d1 * x / (d1 * x + d2), d1 / 2, d2 / 2)),
     lo: () => 0, hi: () => 100,
   },
   beta: {
-    d: (x, a, b) => (x <= 0 || x >= 1 ? 0 : Math.exp((a - 1) * Math.log(x) + (b - 1) * Math.log(1 - x) + lgamma(a + b) - lgamma(a) - lgamma(b))),
+    d: (x, a, b) => (x < 0 || x > 1 ? 0 : x === 0 ? edge(a - 1, b) : x === 1 ? edge(b - 1, a) : Math.exp((a - 1) * Math.log(x) + (b - 1) * Math.log(1 - x) + lgamma(a + b) - lgamma(a) - lgamma(b))),
     p: (x, a, b) => betaI(x, a, b),
     lo: () => 0, hi: () => 1,
   },
   weibull: {
     d: (x, s) => (x < 0 ? 0 : s * x ** (s - 1) * Math.exp(-(x ** s))),
-    p: (x, s) => (x < 0 ? 0 : 1 - Math.exp(-(x ** s))),
-    q: (p, s) => (-Math.log(1 - p)) ** (1 / s),
+    p: (x, s) => (x < 0 ? 0 : -Math.expm1(-(x ** s))),
+    q: (p, s) => (-Math.log1p(-p)) ** (1 / s),
   },
   logis: {
-    d: (x, l, s) => { const z = Math.exp(-(x - l) / s); return z / (s * (1 + z) ** 2); },
+    d: (x, l, s) => { const z = Math.exp(-Math.abs(x - l) / s); return z / (s * (1 + z) ** 2); },
     p: (x, l, s) => 1 / (1 + Math.exp(-(x - l) / s)),
     q: (p, l, s) => l + s * Math.log(p / (1 - p)),
   },
   cauchy: {
     d: (x, l, s) => 1 / (Math.PI * s * (1 + ((x - l) / s) ** 2)),
-    p: (x, l, s) => 0.5 + Math.atan((x - l) / s) / Math.PI,
+    p: (x, l, s) => { const u = (x - l) / s; return u < -1 ? -Math.atan(1 / u) / Math.PI : 0.5 + Math.atan(u) / Math.PI; },
     q: (p, l, s) => l + s * Math.tan(Math.PI * (p - 0.5)),
   },
   binom: {
     discrete: true,
-    d: (k, n, p) => (k < 0 || k > n || k !== Math.floor(k) ? 0 : Math.exp(lchoose(n, k) + k * Math.log(p) + (n - k) * Math.log(1 - p))),
+    d: (k, n, p) => (k < 0 || k > n || !isInt(k) ? 0 : Math.exp(lchoose(n, k) + xlog(k, p) + xlog(n - k, 1 - p))),
     p: (k, n, p) => (k < 0 ? 0 : k >= n ? 1 : 1 - betaI(p, Math.floor(k) + 1, n - Math.floor(k))),
     lo: () => 0, hi: (n) => n,
   },
   pois: {
     discrete: true,
-    d: (k, l) => (k < 0 || k !== Math.floor(k) ? 0 : Math.exp(k * Math.log(l) - l - lgamma(k + 1))),
-    p: (k, l) => (k < 0 ? 0 : 1 - gammaP(Math.floor(k) + 1, l)),
+    d: (k, l) => (k < 0 || !isInt(k) ? 0 : Math.exp(xlog(k, l) - l - lgamma(k + 1))),
+    p: (k, l) => (k < 0 ? 0 : gammaQ(Math.floor(k) + 1, l)),
     lo: () => 0, hi: (l) => l * 4 + 20,
   },
   geom: {
     discrete: true,
-    d: (k, p) => (k < 0 ? 0 : p * (1 - p) ** k),
+    d: (k, p) => (k < 0 || !isInt(k) ? 0 : p * (1 - p) ** k),
     p: (k, p) => (k < 0 ? 0 : 1 - (1 - p) ** (Math.floor(k) + 1)),
     lo: () => 0, hi: () => 1000,
   },
   nbinom: {
     discrete: true,
-    d: (k, n, p) => (k < 0 ? 0 : Math.exp(lgamma(n + k) - lgamma(k + 1) - lgamma(n) + n * Math.log(p) + k * Math.log(1 - p))),
+    d: (k, n, p) => (k < 0 || !isInt(k) ? 0 : Math.exp(lgamma(n + k) - lgamma(k + 1) - lgamma(n) + n * Math.log(p) + xlog(k, 1 - p))),
     p: (k, n, p) => (k < 0 ? 0 : betaI(p, n, Math.floor(k) + 1)),
     lo: () => 0, hi: () => 1000,
   },
@@ -199,8 +225,16 @@ export function distFunction(kind: 'd' | 'p' | 'q', dist: string): ((args: numbe
   if (kind === 'd' && D.d) return (a) => D.d!(a[0], ...a.slice(1));
   if (kind === 'p' && D.p) return (a) => D.p!(a[0], ...a.slice(1));
   if (kind === 'q') {
-    if (D.q) return (a) => D.q!(a[0], ...a.slice(1));
-    if (D.p) return (a) => invert((x) => D.p!(x, ...a.slice(1)), a[0], D.lo?.(...a.slice(1)) ?? 0, D.hi?.(...a.slice(1)) ?? 10, D.discrete);
+    const check = (p: number) => { if (!(p >= 0 && p <= 1)) throw new CalcError('Wahrscheinlichkeit muss zwischen 0 und 1 liegen'); };
+    if (D.q) return (a) => { check(a[0]); return D.q!(a[0], ...a.slice(1)); };
+    if (D.p) return (a) => {
+      check(a[0]);
+      const ps = a.slice(1);
+      // end points of the support
+      if (a[0] === 0) return D.discrete ? (D.lo?.(...ps) ?? 0) : dist === 't' ? -Infinity : (D.lo?.(...ps) ?? 0);
+      if (a[0] === 1) return dist === 'beta' ? 1 : dist === 'binom' ? ps[0] : Infinity;
+      return invert((x) => D.p!(x, ...a.slice(1)), a[0], D.lo?.(...ps) ?? 0, D.hi?.(...ps) ?? 10, D.discrete);
+    };
   }
   return null;
 }

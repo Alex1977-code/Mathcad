@@ -472,3 +472,48 @@ describe('Befunde der Testagenten: Reihenfolge', () => {
     expect(new Set(orders).size).toBe(1);
   });
 });
+
+describe('Befunde der Testagenten: Numerik & Statistik', () => {
+  const num = (lines: string[]) => si(lastVal(lines));
+  it('deriv bei kleinem/großem x und höherer Ordnung', () => {
+    expect(num(['x := 0.01', 'deriv(1/x, x) ='])).toBeCloseTo(-10000, 3);
+    expect(num(['x := 0.001', 'deriv(e^(1000*x), x) ='])).toBeCloseTo(2718.2818, 3);
+    expect(num(['x := 1e6', 'deriv(sin(x), x) ='])).toBeCloseTo(Math.cos(1e6), 6);
+    expect(num(['x := 0.05', 'deriv(ln(x), x) ='])).toBeCloseTo(20, 6);
+    expect(num(['x := 0.5', 'deriv(ln(x), x, 5) ='])).toBeCloseTo(768, 1);
+    expect(num(['x := 0.5', 'deriv(ln(x), x, 4) ='])).toBeCloseTo(-96, 2);
+  });
+  it('int mit Singularität an der oberen Grenze und langsam abfallend bis ∞', () => {
+    expect(num(['int(1/sqrt(1-x), x, 0, 1) ='])).toBeCloseTo(2, 5);
+    expect(num(['int(1/sqrt(1-x^2), x, -1, 1) ='])).toBeCloseTo(Math.PI, 5);
+    expect(num(['int(1/x^1.5, x, 1, ∞) ='])).toBeCloseTo(2, 5);
+    expect(num(['int(1/sqrt(x)/(1+x), x, 0, ∞) ='])).toBeCloseTo(Math.PI, 4);
+  });
+  it('floor/ceil/round ohne Verfälschung', () => {
+    expect(num(['floor(123456789012345.6) ='])).toBe(123456789012345);
+    expect(num(['floor(0.99999999999999) ='])).toBe(0);
+    expect(num(['floor(0.1*30) ='])).toBe(3);
+    expect(num(['round(0.49999999999) ='])).toBe(0);
+    expect(num(['round(2.675, 2) ='])).toBe(2.68);
+    expect(num(['Round(-7, 2) ='])).toBe(-8);
+  });
+  it('Verteilungen: große Parameter, Ränder, Genauigkeit', () => {
+    expect(num(['ppois(1e6, 1e6) ='])).toBeCloseTo(0.500266, 5);
+    expect(num(['pgamma(1e5, 1e5) ='])).toBeCloseTo(0.500421, 5);
+    expect(num(['dbinom(3, 10, 0.5) ='])).toBeCloseTo(0.1171875, 12);
+    expect(num(['erfc(6) =']) / 2.1519736712498913e-17).toBeCloseTo(1, 10);
+    expect(num(['dbinom(10, 10, 1) ='])).toBe(1);
+    expect(num(['dpois(0, 0) ='])).toBe(1);
+    expect(num(['dhypergeom(50, 200, 300, 100) ='])).toBeCloseTo(0.006919, 5);
+    expect(num(['combin(1000, 500) =']) / 2.7028824094543656e299).toBeCloseTo(1, 9);
+    expect(num(['dchisq(0, 2) ='])).toBe(0.5);
+    expect(num(['qt(0.5, 7) ='])).toBe(0);
+    expect(last(['dnorm([0; 1], 0, 1) ='])).toBe('[0.399; 0.242]');
+  });
+  it('Fehler statt NaN/∞', () => {
+    expect(last(['Γ(-3) ='])).toMatch(/Polstelle/);
+    expect(last(['qnorm(1.5, 0, 1) ='])).toMatch(/Wahrscheinlichkeit/);
+    expect(last(['skew([1; 2]) ='])).toMatch(/mindestens 3/);
+    expect(last(['corr([1; 1; 1], [1; 2; 3]) ='])).toMatch(/konstant/);
+  });
+});

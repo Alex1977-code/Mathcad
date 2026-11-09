@@ -9,7 +9,7 @@ import {
 import { cross3 as crossFn } from './evaluator';
 import { hasOffset, mkQ, qSum, withValue } from './quantity';
 import { brent, pnormStd, qnormStd, rootFromGuess, solveSystem } from './numeric';
-import { DISTRIBUTIONS, distFunction, distRandom, percentile, setStatsSeed } from './stats';
+import { DISTRIBUTIONS, distFunction, distRandom, gammaQ, lgamma, percentile, setStatsSeed } from './stats';
 
 type Builtin = (args: Val[], ev: Evaluator) => Val;
 type Lazy = (args: Node[], scope: Scope, ev: Evaluator) => Val;
@@ -74,10 +74,26 @@ function mathcadMod(x: Val, y: Val): Val {
   return math.subtract(x as Unit, math.multiply(y as Unit, Math.trunc(qn)) as Unit) as Val;
 }
 
+/** Snap values that are an integer up to a few units in the last place (0.1·30 = 3.0000000000000004). */
+function snapInt(x: number): number {
+  const r = Math.round(x);
+  return Math.abs(x - r) <= 4 * Number.EPSILON * Math.max(1, Math.abs(x)) ? r : x;
+}
+const floorS = (x: number) => Math.floor(snapInt(x));
+const ceilS = (x: number) => Math.ceil(snapInt(x));
+/** Round half away from zero (Mathcad), robust against representation errors (2.675·100 = 267.49999…). */
+function roundHalf(x: number): number {
+  const a = Math.abs(x);
+  let r = Math.floor(a);
+  const frac = a - r;
+  if (frac > 0.5 || Math.abs(frac - 0.5) <= 8 * Number.EPSILON * Math.max(1, a)) r += 1;
+  return x < 0 ? -r : r;
+}
+
 function roundTo(x: Val, mult: Val, mode: 'floor' | 'ceil' | 'round'): Val {
   const q = math.divide(x as Unit, mult as Unit) as unknown;
   const qn = typeof q === 'number' ? q : toNumber(q as Val);
-  const r = mode === 'floor' ? Math.floor(qn + 1e-12) : mode === 'ceil' ? Math.ceil(qn - 1e-12) : Math.round(qn);
+  const r = mode === 'floor' ? floorS(qn) : mode === 'ceil' ? ceilS(qn) : roundHalf(qn);
   return math.multiply(mult as Unit, r) as Val;
 }
 
@@ -147,13 +163,22 @@ export const BUILTINS: Record<string, Builtin> = {
   sign: map1(x => Math.sign(siNum(x))),
   signum: map1(x => (siNum(x) === 0 ? 0 : Math.sign(siNum(x)))),
   csgn: map1(x => { const c = isComplex(x) ? (x as Complex) : { re: siNum(x), im: 0 }; return c.re > 0 || (c.re === 0 && c.im > 0) ? 1 : c.re === 0 && c.im === 0 ? 0 : -1; }),
-  floor: map1(x => (Math.floor(toNumber(x) + 1e-13 * Math.abs(toNumber(x))))),
-  ceil: map1(x => Math.ceil(toNumber(x) - 1e-13 * Math.abs(toNumber(x)))),
+  floor: map1(x => floorS(toNumber(x))),
+  ceil: map1(x => ceilS(toNumber(x))),
   trunc: map1(x => Math.trunc(toNumber(x))),
   round: (args) => {
     nargs('round', args, 1, 2);
     const n = args.length === 2 ? toInt(args[1], 'Stellen') : 0;
-    const f = (x: Val) => { const p = Math.pow(10, n); return Math.round(toNumber(x) * p + Math.sign(toNumber(x)) * 1e-9) / p; };
+    const f = (x: Val) => {
+      const v = toNumber(x);
+      if (n >= 0) {
+        // decimal rounding on the shortest decimal representation of x
+        const [m, e] = v.toExponential(15).split('e');
+        return Number(`${roundHalf(Number(`${m}e${Number(e) + n}`))}e${-n}`);
+      }
+      const p = Math.pow(10, -n);
+      return roundHalf(v / p) * p;
+    };
     return isMatrix(args[0]) ? math.map(args[0] as Matrix, (x: unknown) => f(x as Val)) as Matrix : f(args[0]);
   },
   Floor: (args) => { nargs('Floor', args, 2); return roundTo(args[0], args[1], 'floor'); },
@@ -163,12 +188,17 @@ export const BUILTINS: Record<string, Builtin> = {
   mod: (args) => { nargs('mod', args, 2); return mathcadMod(args[0], args[1]); },
   gcd: (args) => elements(args).map(x => toInt(x)).reduce((a, b) => math.gcd(a, b)),
   lcm: (args) => elements(args).map(x => toInt(x)).reduce((a, b) => math.lcm(a, b)),
-  combin: (args) => { nargs('combin', args, 2); return math.combinations(toInt(args[0]), toInt(args[1])); },
+  combin: (args) => broadcast(args, ([n0, k0]) => {
+    const n = toInt(n0), k = toInt(k0);
+    if (k < 0 || k > n) return 0;
+    const c = math.combinations(n, k) as number;
+    return isFinite(c) && c <= Number.MAX_SAFE_INTEGER ? c : Math.round(Math.exp(lgamma(n + 1) - lgamma(k + 1) - lgamma(n - k + 1)));
+  }),
   permut: (args) => { nargs('permut', args, 2); return math.permutations(toInt(args[0]), toInt(args[1])); },
-  'Γ': map1(x => math.gamma(toNumber(x))),
-  gamma: map1(x => math.gamma(toNumber(x))),
+  'Γ': map1(x => gammaFn(toNumber(x))),
+  gamma: map1(x => gammaFn(toNumber(x))),
   erf: map1(x => math.erf(toNumber(x))),
-  erfc: map1(x => 1 - math.erf(toNumber(x))),
+  erfc: map1(x => erfc(toNumber(x))),
   Re: map1(x => (isComplex(x) ? (x as Complex).re : x)),
   Im: map1(x => (isComplex(x) ? (x as Complex).im : 0)),
   re: map1(x => (isComplex(x) ? (x as Complex).re : x)),
@@ -293,9 +323,9 @@ export const BUILTINS: Record<string, Builtin> = {
     return best;
   },
   percentile: (args) => { nargs('percentile', args, 2); return percentile(elements([args[0]]).map(x => toNumber(x)), toNumber(args[1])); },
-  skew: (args) => { const e = elements(args).map(x => toNumber(x)); const n = e.length; const m = e.reduce((a, b) => a + b, 0) / n; const s = Math.sqrt(e.reduce((a, b) => a + (b - m) ** 2, 0) / (n - 1)); return n / ((n - 1) * (n - 2)) * e.reduce((a, b) => a + ((b - m) / s) ** 3, 0); },
-  kurt: (args) => { const e = elements(args).map(x => toNumber(x)); const n = e.length; const m = e.reduce((a, b) => a + b, 0) / n; const s = Math.sqrt(e.reduce((a, b) => a + (b - m) ** 2, 0) / (n - 1)); return n * (n + 1) / ((n - 1) * (n - 2) * (n - 3)) * e.reduce((a, b) => a + ((b - m) / s) ** 4, 0) - 3 * (n - 1) ** 2 / ((n - 2) * (n - 3)); },
-  corr: (args) => { nargs('corr', args, 2); const a = elements([args[0]]).map(x => toNumber(x)), b = elements([args[1]]).map(x => toNumber(x)); const n = a.length; const ma = a.reduce((x, y) => x + y, 0) / n, mb = b.reduce((x, y) => x + y, 0) / n; let sab = 0, saa = 0, sbb = 0; for (let i = 0; i < n; i++) { sab += (a[i] - ma) * (b[i] - mb); saa += (a[i] - ma) ** 2; sbb += (b[i] - mb) ** 2; } return sab / Math.sqrt(saa * sbb); },
+  skew: (args) => { const e = elements(args).map(x => toNumber(x)); const n = e.length; if (n < 3) throw new CalcError('skew: mindestens 3 Werte nötig'); if (e.every(x => x === e[0])) throw new CalcError('skew: alle Werte gleich'); const m = e.reduce((a, b) => a + b, 0) / n; const s = Math.sqrt(e.reduce((a, b) => a + (b - m) ** 2, 0) / (n - 1)); return n / ((n - 1) * (n - 2)) * e.reduce((a, b) => a + ((b - m) / s) ** 3, 0); },
+  kurt: (args) => { const e = elements(args).map(x => toNumber(x)); const n = e.length; if (n < 4) throw new CalcError('kurt: mindestens 4 Werte nötig'); if (e.every(x => x === e[0])) throw new CalcError('kurt: alle Werte gleich'); const m = e.reduce((a, b) => a + b, 0) / n; const s = Math.sqrt(e.reduce((a, b) => a + (b - m) ** 2, 0) / (n - 1)); return n * (n + 1) / ((n - 1) * (n - 2) * (n - 3)) * e.reduce((a, b) => a + ((b - m) / s) ** 4, 0) - 3 * (n - 1) ** 2 / ((n - 2) * (n - 3)); },
+  corr: (args) => { nargs('corr', args, 2); const a = elements([args[0]]).map(x => toNumber(x)), b = elements([args[1]]).map(x => toNumber(x)); const n = a.length; const ma = a.reduce((x, y) => x + y, 0) / n, mb = b.reduce((x, y) => x + y, 0) / n; let sab = 0, saa = 0, sbb = 0; for (let i = 0; i < n; i++) { sab += (a[i] - ma) * (b[i] - mb); saa += (a[i] - ma) ** 2; sbb += (b[i] - mb) ** 2; } if (!(saa > 0 && sbb > 0)) throw new CalcError('corr: ein Vektor ist konstant'); return sab / Math.sqrt(saa * sbb); },
   cvar: (args) => { nargs('cvar', args, 2); const a = elements([args[0]]).map(x => toNumber(x)), b = elements([args[1]]).map(x => toNumber(x)); const n = a.length; const ma = a.reduce((x, y) => x + y, 0) / n, mb = b.reduce((x, y) => x + y, 0) / n; let s = 0; for (let i = 0; i < n; i++) s += (a[i] - ma) * (b[i] - mb); return s / n; },
   slope: (args) => regress(args, 'slope'),
   intercept: (args) => regress(args, 'intercept'),
@@ -382,10 +412,17 @@ export const BUILTINS: Record<string, Builtin> = {
   },
 
   // probability
-  dnorm: (args) => { nargs('dnorm', args, 3); return normalPdf(siNum(args[0]), siNum(args[1]), siNum(args[2])); },
-  pnorm: (args) => { nargs('pnorm', args, 3); return pnormStd((siNum(args[0]) - siNum(args[1])) / siNum(args[2])); },
-  cnorm: (args) => { nargs('cnorm', args, 1); return pnormStd(siNum(args[0])); },
-  qnorm: (args) => { nargs('qnorm', args, 3); return siNum(args[1]) + siNum(args[2]) * qnormStd(siNum(args[0])); },
+  dnorm: (args) => { nargs('dnorm', args, 3); return broadcast(args, ([x, m, sd]) => normalPdf(siNum(x), siNum(m), siNum(sd))); },
+  pnorm: (args) => { nargs('pnorm', args, 3); return broadcast(args, ([x, m, sd]) => pnormStd((siNum(x) - siNum(m)) / siNum(sd))); },
+  cnorm: (args) => { nargs('cnorm', args, 1); return broadcast(args, ([x]) => pnormStd(siNum(x))); },
+  qnorm: (args) => {
+    nargs('qnorm', args, 3);
+    return broadcast(args, ([p, m, sd]) => {
+      const pp = siNum(p);
+      if (!(pp >= 0 && pp <= 1)) throw new CalcError('Wahrscheinlichkeit muss zwischen 0 und 1 liegen');
+      return siNum(m) + siNum(sd) * qnormStd(pp);
+    });
+  },
   rnorm: (args) => { nargs('rnorm', args, 3); const m = toInt(args[0]); return column(Array.from({ length: m }, () => siNum(args[1]) + siNum(args[2]) * randn())); },
   runif: (args) => { nargs('runif', args, 3); const m = toInt(args[0]); const a = siNum(args[1]), b = siNum(args[2]); return column(Array.from({ length: m }, () => a + (b - a) * rand())); },
   rnd: (args) => { nargs('rnd', args, 1); return rand() * toNumber(args[0]); },
@@ -535,7 +572,20 @@ function hyper(m: number, a: number, b: number, n: number): number {
   const lc = (x: number, k: number) => lgammaN(x + 1) - lgammaN(k + 1) - lgammaN(x - k + 1);
   return Math.exp(lc(a, m) + lc(b, n - m) - lc(a + b, n));
 }
-function lgammaN(x: number): number { return Math.log(Math.abs(math.gamma(x) as number)); }
+function lgammaN(x: number): number { return lgamma(x); }
+
+/** Γ(x) with an error at the poles 0, −1, −2, … */
+function gammaFn(x: number): number {
+  if (x <= 0 && Number.isInteger(x)) throw new CalcError('Γ hat bei 0, −1, −2, … Polstellen');
+  return math.gamma(x) as number;
+}
+
+/** Complementary error function without cancellation for large x. */
+function erfc(x: number): number {
+  if (x < 0) return 2 - erfc(-x);
+  if (x < 0.5) return 1 - (math.erf(x) as number);
+  return gammaQ(0.5, x * x);
+}
 function siOrNum(v: Val): number { return isUnit(v) ? (v as Unit).value as number : toNumber(v); }
 function scaleLike(tmpl: Val, x: number): Val { return isUnit(tmpl) ? withValue(tmpl as Unit, x) : x; }
 function regress(args: Val[], what: 'slope' | 'intercept'): number {

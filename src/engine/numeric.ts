@@ -56,7 +56,16 @@ export function integrate(f: (x: number) => number, a: number, b: number, tol = 
     g = (t: number) => { const x = b - (1 - t) / t; return f(x) / (t * t); };
     lo = 0; hi = 1;
   }
-  const guard = (x: number) => { const y = g(x); if (!isFinite(y)) throw new CalcError('Integrand nicht endlich'); return y; };
+  // a node rounded onto an end point (singularity there, or x = ∞ after the transformation) contributes nothing
+  const near = (x: number) => Math.abs(x - lo) <= 8 * Number.EPSILON * Math.max(1, Math.abs(lo))
+    || Math.abs(x - hi) <= 8 * Number.EPSILON * Math.max(1, Math.abs(hi));
+  const guard = (x: number) => {
+    let y: number;
+    try { y = g(x); } catch (e) { if (near(x)) return 0; throw e; }
+    if (isFinite(y)) return y;
+    if (near(x)) return 0;
+    throw new CalcError('Integrand nicht endlich');
+  };
   type Seg = { a: number; b: number; v: number; e: number; abs: number };
   const first = gk15(guard, lo, hi);
   const segs: Seg[] = [{ a: lo, b: hi, v: first[0], e: first[1], abs: first[2] }];
@@ -77,20 +86,26 @@ export function integrate(f: (x: number) => number, a: number, b: number, tol = 
   return segs.reduce((t, s) => t + s.v, 0);
 }
 
-/** Numerical derivative of order n (1..5) using Richardson extrapolation of central differences. */
-export function derivative(f: (x: number) => number, x: number, order = 1): number {
-  if (order === 0) return f(x);
-  if (order > 1) {
-    const h0 = Math.max(Math.abs(x), 1) * Math.pow(1e-16, 1 / (order + 2)) * 4;
-    return (derivative(f, x + h0, order - 1) - derivative(f, x - h0, order - 1)) / (2 * h0);
+/** Central difference of order n with step h (error O(h²)). */
+function centralDiff(f: (x: number) => number, x: number, n: number, h: number): number {
+  if (n === 1) return (f(x + h) - f(x - h)) / (2 * h);
+  // Σ (-1)^k C(n,k) f(x + (n/2 - k)·h) / hⁿ
+  let s = 0, c = 1;
+  for (let k = 0; k <= n; k++) {
+    s += (k % 2 ? -c : c) * f(x + (n / 2 - k) * h);
+    c = c * (n - k) / (k + 1);
   }
-  let h = Math.max(Math.abs(x), 1) * 0.1;
+  return s / Math.pow(h, n);
+}
+
+/** Richardson extrapolation (Ridders) starting at step h0: estimate and error estimate. */
+function ridders(D: (h: number) => number, h0: number): { v: number; err: number } {
   const N = 10;
   const T: number[][] = [];
-  let best = NaN, bestErr = Infinity;
+  let h = h0, best = NaN, bestErr = Infinity;
   for (let i = 0; i < N; i++) {
-    T[i] = [];
-    T[i][0] = (f(x + h) - f(x - h)) / (2 * h);
+    T[i] = [D(h)];
+    if (!isFinite(T[i][0])) break;
     let fac = 1;
     for (let j = 1; j <= i; j++) {
       fac *= 4;
@@ -101,7 +116,34 @@ export function derivative(f: (x: number) => number, x: number, order = 1): numb
     if (i > 0 && Math.abs(T[i][i] - T[i - 1][i - 1]) > 2 * bestErr) break;
     h /= 2;
   }
-  return isNaN(best) ? T[0][0] : best;
+  return { v: best, err: bestErr };
+}
+
+/**
+ * Numerical derivative of order n (1..5). Several starting steps are tried (from 10 % of max(|x|, 1)
+ * downwards), so poles or domain limits near x and fast variations are handled; the estimate with the
+ * smallest error estimate wins.
+ */
+export function derivative(f: (x: number) => number, x: number, order = 1): number {
+  if (order === 0) return f(x);
+  const s = Math.max(Math.abs(x), 1);
+  let best = NaN, bestErr = Infinity;
+  let lastError: unknown;
+  for (let k = 0; k <= 10; k++) {
+    const h0 = 0.1 * order * s * Math.pow(10, -k);
+    // below this step rounding errors dominate (differences of f become 0 and fake a zero error)
+    if (h0 < 10 * s * Math.pow(Number.EPSILON, 1 / (order + 1))) break;
+    try {
+      const r = ridders(h => centralDiff(f, x, order, h), h0);
+      if (isFinite(r.v) && r.err < bestErr) { best = r.v; bestErr = r.err; }
+    } catch (e) { lastError = e; }
+    if (bestErr <= 1e-12 * Math.max(Math.abs(best), 1e-300)) break;
+  }
+  if (!isFinite(best)) {
+    if (lastError) throw lastError;
+    throw new CalcError('Ableitung nicht berechenbar');
+  }
+  return best;
 }
 
 /** Brent's method on a bracketing interval. */
