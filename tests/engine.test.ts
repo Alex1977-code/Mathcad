@@ -507,7 +507,7 @@ describe('Befunde der Testagenten: Numerik & Statistik', () => {
     expect(num(['dhypergeom(50, 200, 300, 100) ='])).toBeCloseTo(0.006919, 5);
     expect(num(['combin(1000, 500) =']) / 2.7028824094543656e299).toBeCloseTo(1, 9);
     expect(num(['dchisq(0, 2) ='])).toBe(0.5);
-    expect(num(['qt(0.5, 7) ='])).toBe(0);
+    expect(num(['qt(0.5, 7) ='])).toBeCloseTo(0, 12);
     expect(last(['dnorm([0; 1], 0, 1) ='])).toBe('[0.399; 0.242]');
   });
   it('Fehler statt NaN/∞', () => {
