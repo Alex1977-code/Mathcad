@@ -95,7 +95,7 @@ export function toText(n: Node): string {
       if (!n.lo || !n.hi) return `${name}(${toText(n.body)}, ${n.v})`;
       return `${name}(${toText(n.body)}, ${n.v}, ${toText(n.lo)}, ${toText(n.hi)})`;
     }
-    case 'int': return `int(${toText(n.body)}, ${n.v}, ${toText(n.lo)}, ${toText(n.hi)})`;
+    case 'int': return n.lo && n.hi ? `int(${toText(n.body)}, ${n.v}, ${toText(n.lo)}, ${toText(n.hi)})` : `int(${toText(n.body)}, ${n.v})`;
     case 'deriv': return `deriv(${toText(n.body)}, ${n.v}${n.order && n.order !== 1 ? ', ' + n.order : ''})`;
     case 'program': return '\n' + stmtsToText(n.body, '  ');
   }
@@ -138,7 +138,7 @@ export function stmtToText(s: MathStmt): string {
     case 'empty': return '';
     case 'expr': return toText(s.expr);
     case 'eval':
-      if (s.sym) return `${toText(s.expr)} →${s.sym.kw ? ' ' + s.sym.kw.name + (s.sym.kw.args.length ? ', ' + s.sym.kw.args.map(toText).join(', ') : '') : ''}`;
+      if (s.sym) return `${toText(s.expr)} →${s.sym.kw ? ' ' + s.sym.kw.name + (s.sym.kw.args.length ? ', ' + s.sym.kw.args.map(a => (a.k === 'bin' && a.op === '==' ? `${toText(a.a)} = ${toText(a.b)}` : toText(a))).join(', ') : '') : ''}`;
       return `${toText(s.expr)} =${s.unit ? ' ' + toText(s.unit) : ''}`;
     case 'define': {
       const op = s.global ? ' ≡ ' : ' := ';

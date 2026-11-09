@@ -261,6 +261,11 @@ try {
   const symTexts = await page.locator('.region.math-region').evaluateAll(els => els.slice(-3).map(e => e.innerText.replace(/\s+/g, '')));
   ok(/3[·⋅]?x2$/.test(symTexts[0]) && /x2\+2[·⋅]?x\+1$/.test(symTexts[1]) && /−?−pq|−qp/.test(symTexts[2]) && (await page.locator('.region.error').count()) === 0,
     `Symbolisch: x²+2x·x → 3x², (x+1)² → expand, p·z+q=0 → solve (${JSON.stringify(symTexts)})`);
+  for (const t of ['int(x*exp(x),x)->', '[x+y==10;x-y==2]-> solve, x, y', 'x^2-5*x+6-> factor', 'exp(x)-> series, x = 0, 4']) { await page.keyboard.type(t); await page.keyboard.press('Enter'); }
+  await idle();
+  const sym2 = await page.locator('.region.math-region').evaluateAll(els => els.slice(-4).map(e => e.innerText.replace(/\s+/g, '')));
+  ok(/→ex[·⋅]\(x−1\)$/.test(sym2[0]) && /solve,x,y.*6.*4/.test(sym2[1]) && /\(x−2\)[·⋅]?\(x−3\)/.test(sym2[2]) && /1\+x\+/.test(sym2[3]) && (await page.locator('.region.error').count()) === 0,
+    `Symbolisch: Integral, Gleichungssystem, factor, series (${JSON.stringify(sym2)})`);
   await shot('14-symbolisch.png');
 
   /* 13 · responsiveness on a large imported sheet: an edit at the end is recalculated incrementally */

@@ -26,7 +26,8 @@ export type Node =
   | { k: 'range'; start: Node; second?: Node; end: Node }
   | { k: 'paren'; a: Node }
   | { k: 'iter'; op: 'sum' | 'prod'; body: Node; v?: string; lo?: Node; hi?: Node }
-  | { k: 'int'; body: Node; v: string; lo: Node; hi: Node }
+  /** Without lo/hi: indefinite integral (symbolic evaluation only). */
+  | { k: 'int'; body: Node; v: string; lo?: Node; hi?: Node }
   | { k: 'deriv'; body: Node; v: string; order?: number }
   | { k: 'program'; body: Stmt[] }
   | { k: 'placeholder' };
@@ -77,7 +78,7 @@ export function walk(n: Node, fn: (n: Node) => boolean | void): void {
     case 'matrix': n.rows.forEach(r => r.forEach(c => walk(c, fn))); break;
     case 'range': walk(n.start, fn); if (n.second) walk(n.second, fn); walk(n.end, fn); break;
     case 'iter': walk(n.body, fn); if (n.lo) walk(n.lo, fn); if (n.hi) walk(n.hi, fn); break;
-    case 'int': walk(n.body, fn); walk(n.lo, fn); walk(n.hi, fn); break;
+    case 'int': walk(n.body, fn); if (n.lo) walk(n.lo, fn); if (n.hi) walk(n.hi, fn); break;
     case 'deriv': walk(n.body, fn); break;
     case 'program': walkStmts(n.body, fn); break;
   }

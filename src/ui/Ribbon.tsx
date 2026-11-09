@@ -213,6 +213,10 @@ export function Ribbon() {
                 <Sym l="\xrightarrow{\textsf{expand}}" title="Ausmultiplizieren  (x+1)^2 → expand" snippet=" → expand" />
                 <Sym l="\xrightarrow{\textsf{solve}}" title="Symbolisch lösen  a*x + b == 0 → solve, x" snippet=" → solve, x" />
                 <Sym l="\xrightarrow{\textsf{float}}" title="Gleitkomma mit n Stellen  π → float, 6" snippet=" → float, 6" />
+                <Sym l="\xrightarrow{\textsf{subst}}" title="Einsetzen  x^2 → substitute, x = a + 1" snippet=" → substitute, x = ?" />
+                <Sym l="\xrightarrow{\textsf{factor}}" title="Faktorisieren  x^2 - 5*x + 6 → factor" snippet=" → factor" />
+                <Sym l="\xrightarrow{\textsf{series}}" title="Taylorreihe  exp(x) → series, x = 0, 6" snippet=" → series, x = 0, 6" />
+                <Sym l="\int\!\mathrm{d}x" title="Unbestimmtes Integral (symbolisch)  int(f, x) →" snippet="int(?, x) →" />
               </SymGrid>
             </Group>
             <Group label="Vergleich & Logik">

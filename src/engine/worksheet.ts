@@ -92,7 +92,7 @@ export function freeRangeVars(n: Node, scope: Scope): string[] {
       } else if (x.k === 'int' || x.k === 'deriv') {
         const b = new Set(bound); b.add(x.v);
         visit(x.body, b);
-        if (x.k === 'int') { visit(x.lo, bound); visit(x.hi, bound); }
+        if (x.k === 'int') { if (x.lo) visit(x.lo, bound); if (x.hi) visit(x.hi, bound); }
         return false;
       } else if (x.k === 'program' || x.k === 'range') {
         return false;
@@ -425,7 +425,7 @@ export class WorksheetEngine {
     const visit = (n: Node, b: Set<string>) => walk(n, (x) => {
       if (x.k === 'program') return false;
       if (x.k === 'iter' && x.v) { const nb = new Set(b); nb.add(x.v); visit(x.body, nb); if (x.lo) visit(x.lo, b); if (x.hi) visit(x.hi, b); return false; }
-      if (x.k === 'int' || x.k === 'deriv') { const nb = new Set(b); nb.add(x.v); visit(x.body, nb); if (x.k === 'int') { visit(x.lo, b); visit(x.hi, b); } return false; }
+      if (x.k === 'int' || x.k === 'deriv') { const nb = new Set(b); nb.add(x.v); visit(x.body, nb); if (x.k === 'int') { if (x.lo) visit(x.lo, b); if (x.hi) visit(x.hi, b); } return false; }
       if (x.k === 'call' && ['root', 'Find', 'Minerr', 'find'].includes(x.name)) return false;
       if (x.k === 'id' && !b.has(x.name) && fn.scope!.get(x.name) === undefined && !(x.name in CONSTANTS) && x.name !== 'ORIGIN' && lookupUnit(x.name) === null && !isBuiltinFunction(x.name)) missing.push(x.name);
       if (x.k === 'call' && !b.has(x.name) && fn.scope!.get(x.name) === undefined && !isBuiltinFunction(x.name) && lookupUnit(x.name) === null) missing.push(x.name);

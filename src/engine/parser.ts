@@ -372,7 +372,8 @@ class Parser {
     }
     if (iter && args.length === 1) return { k: 'iter', op: iter, body: args[0] };
     if (name === 'int' || name === '∫') {
-      if (args.length !== 4) throw new ParseError('int(Ausdruck, x, a, b) erwartet', t.pos, t.end);
+      if (args.length !== 4 && args.length !== 2) throw new ParseError('int(Ausdruck, x, a, b) oder unbestimmt int(Ausdruck, x) erwartet', t.pos, t.end);
+      if (args.length === 2) return { k: 'int', body: args[0], v: boundVar(args[1], 'int') };
       return { k: 'int', body: args[0], v: boundVar(args[1], 'int'), lo: args[2], hi: args[3] };
     }
     if (name === 'deriv') {
@@ -569,9 +570,27 @@ function parseMathRegionInner(text: string): MathStmt {
       const m = /^\s*([\p{L}]+)\s*(?:,(.*))?$/u.exec(unitSrc);
       if (!unitSrc.trim()) return { kind: 'eval', expr, sym: {} };
       if (!m) throw new ParseError('Nach „→“ folgt ein Schlüsselwort: simplify, expand, float, n oder solve, x', toks[eqIdx].end);
-      const argOff = toks[eqIdx].end + unitSrc.indexOf(',') + 1;
-      const args = m[2] !== undefined ? at(argOff, () => parseExpression(m[2], false)) : undefined;
-      return { kind: 'eval', expr, sym: { kw: { name: m[1], args: args ? (args.k === 'matrix' ? args.rows.flat() : [args]) : [] } } };
+      // arguments separated by top-level commas; "x = a" (substitute, series) is read as an equation
+      const args: Node[] = [];
+      if (m[2] !== undefined) {
+        let off = toks[eqIdx].end + unitSrc.indexOf(',') + 1;
+        const src = m[2];
+        const at0 = tokenize(src);
+        let start = 0;
+        const cuts = [...at0.map((t, j) => (t.v === ',' && findTopLevel(at0.slice(0, j + 1), u => u === t) === j ? t.pos : -1)).filter(p => p >= 0), src.length];
+        for (const cut of cuts) {
+          const piece = src.slice(start, cut);
+          const base = off + start;
+          const pt = tokenize(piece);
+          const eq = findTopLevel(pt, t => t.v === '=');
+          args.push(eq >= 0
+            ? { k: 'bin', op: '==', a: at(base, () => parseExpression(piece.slice(0, pt[eq].pos), false)), b: at(base + pt[eq].end, () => parseExpression(piece.slice(pt[eq].end), false)) }
+            : at(base, () => parseExpression(piece, false)));
+          start = cut + 1;
+        }
+        void off;
+      }
+      return { kind: 'eval', expr, sym: { kw: { name: m[1], args } } };
     }
     const unit = unitSrc.trim() ? at(toks[eqIdx].end, () => parseUnit(unitSrc)) : undefined;
     return { kind: 'eval', expr, unit };

@@ -130,7 +130,9 @@ export class Evaluator {
         return { kind: 'range', start, step, end } as RangeVal;
       }
       case 'iter': return this.evalIter(n, scope, vec);
-      case 'int': return this.evalIntegral(n.body, n.v, n.lo, n.hi, scope);
+      case 'int':
+        if (!n.lo || !n.hi) throw new CalcError('Unbestimmtes Integral: nur symbolisch auswertbar (→)');
+        return this.evalIntegral(n.body, n.v, n.lo, n.hi, scope);
       case 'deriv': return this.evalDerivative(n.body, n.v, n.order ?? 1, scope);
       case 'program': return this.runProgram(n.body, new Scope(scope));
     }

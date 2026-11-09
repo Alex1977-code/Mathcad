@@ -140,7 +140,7 @@ export function toLatex(n: Node, ctx: LatexCtx = {}): string {
       if (!n.lo || !n.hi) return `${sym}_{${nameLatex(n.v, ctx)}}${body}`;
       return `${sym}_{${nameLatex(n.v, ctx)}=${L(n.lo)}}^{${L(n.hi)}}${body}`;
     }
-    case 'int': return `\\int_{${L(n.lo)}}^{${L(n.hi)}}${L(n.body)}\\,\\mathrm{d}${nameLatex(n.v, ctx)}`;
+    case 'int': return `\\int${n.lo && n.hi ? `_{${L(n.lo)}}^{${L(n.hi)}}` : ''}${L(n.body)}\\,\\mathrm{d}${nameLatex(n.v, ctx)}`;
     case 'deriv': {
       const o = n.order && n.order !== 1 ? `^{${n.order}}` : '';
       const body = prec(n.body) < 6 ? `\\left(${L(n.body)}\\right)` : L(n.body);
