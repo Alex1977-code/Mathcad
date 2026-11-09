@@ -8,6 +8,7 @@ import {
 } from './values';
 import { cross3 as crossFn } from './evaluator';
 import { hasOffset, mkQ, qSum, withValue } from './quantity';
+import { EXTRA_BUILTINS } from './builtins2';
 import { brent, pnormStd, qnormStd, rootFromGuess, solveSystem } from './numeric';
 import { DISTRIBUTIONS, distFunction, distRandom, gammaQ, lgamma, percentile, setStatsSeed } from './stats';
 
@@ -344,8 +345,8 @@ export const BUILTINS: Record<string, Builtin> = {
     return best;
   },
   percentile: (args) => { nargs('percentile', args, 2); return percentile(elements([args[0]]).map(x => toNumber(x)), toNumber(args[1])); },
-  skew: (args) => { const e = elements(args).map(x => toNumber(x)); const n = e.length; if (n < 3) throw new CalcError('skew: mindestens 3 Werte nötig'); if (e.every(x => x === e[0])) throw new CalcError('skew: alle Werte gleich'); const m = e.reduce((a, b) => a + b, 0) / n; const s = Math.sqrt(e.reduce((a, b) => a + (b - m) ** 2, 0) / (n - 1)); return n / ((n - 1) * (n - 2)) * e.reduce((a, b) => a + ((b - m) / s) ** 3, 0); },
-  kurt: (args) => { const e = elements(args).map(x => toNumber(x)); const n = e.length; if (n < 4) throw new CalcError('kurt: mindestens 4 Werte nötig'); if (e.every(x => x === e[0])) throw new CalcError('kurt: alle Werte gleich'); const m = e.reduce((a, b) => a + b, 0) / n; const s = Math.sqrt(e.reduce((a, b) => a + (b - m) ** 2, 0) / (n - 1)); return n * (n + 1) / ((n - 1) * (n - 2) * (n - 3)) * e.reduce((a, b) => a + ((b - m) / s) ** 4, 0) - 3 * (n - 1) ** 2 / ((n - 2) * (n - 3)); },
+  skew: (args) => { const e = elements(args).map(x => siNum(x)); const n = e.length; if (n < 3) throw new CalcError('skew: mindestens 3 Werte nötig'); if (e.every(x => x === e[0])) throw new CalcError('skew: alle Werte gleich'); const m = e.reduce((a, b) => a + b, 0) / n; const s = Math.sqrt(e.reduce((a, b) => a + (b - m) ** 2, 0) / (n - 1)); return n / ((n - 1) * (n - 2)) * e.reduce((a, b) => a + ((b - m) / s) ** 3, 0); },
+  kurt: (args) => { const e = elements(args).map(x => siNum(x)); const n = e.length; if (n < 4) throw new CalcError('kurt: mindestens 4 Werte nötig'); if (e.every(x => x === e[0])) throw new CalcError('kurt: alle Werte gleich'); const m = e.reduce((a, b) => a + b, 0) / n; const s = Math.sqrt(e.reduce((a, b) => a + (b - m) ** 2, 0) / (n - 1)); return n * (n + 1) / ((n - 1) * (n - 2) * (n - 3)) * e.reduce((a, b) => a + ((b - m) / s) ** 4, 0) - 3 * (n - 1) ** 2 / ((n - 2) * (n - 3)); },
   corr: (args) => { nargs('corr', args, 2); const a = elements([args[0]]).map(x => toNumber(x)), b = elements([args[1]]).map(x => toNumber(x)); const n = a.length; const ma = a.reduce((x, y) => x + y, 0) / n, mb = b.reduce((x, y) => x + y, 0) / n; let sab = 0, saa = 0, sbb = 0; for (let i = 0; i < n; i++) { sab += (a[i] - ma) * (b[i] - mb); saa += (a[i] - ma) ** 2; sbb += (b[i] - mb) ** 2; } if (!(saa > 0 && sbb > 0)) throw new CalcError('corr: ein Vektor ist konstant'); return sab / Math.sqrt(saa * sbb); },
   cvar: (args) => { nargs('cvar', args, 2); const a = elements([args[0]]).map(x => toNumber(x)), b = elements([args[1]]).map(x => toNumber(x)); const n = a.length; const ma = a.reduce((x, y) => x + y, 0) / n, mb = b.reduce((x, y) => x + y, 0) / n; let s = 0; for (let i = 0; i < n; i++) s += (a[i] - ma) * (b[i] - mb); return s / n; },
   slope: (args) => regress(args, 'slope'),
@@ -368,7 +369,9 @@ export const BUILTINS: Record<string, Builtin> = {
     nargs('match', args, 2);
     const rows = matrixRows(asMatrix(args[1]));
     const out: Val[] = [];
-    rows.forEach((r, i) => r.forEach((x, j) => { if (valEq(x, args[0])) out.push(r.length === 1 ? i + ev.opts.origin : makeMatrix([[i + ev.opts.origin], [j + ev.opts.origin]])); }));
+    // Mathcad searches column by column
+    const nc = rows[0]?.length ?? 0;
+    for (let j = 0; j < nc; j++) rows.forEach((r, i) => { if (valEq(r[j], args[0])) out.push(nc === 1 ? i + ev.opts.origin : makeMatrix([[i + ev.opts.origin], [j + ev.opts.origin]])); });
     if (!out.length) throw new CalcError('match: Wert nicht gefunden');
     return column(out);
   },
@@ -959,6 +962,9 @@ export const CONSTANTS: Record<string, () => Val> = {
 export const BUILTIN_NAMES = [...Object.keys(BUILTINS), ...Object.keys(LAZY_BUILTINS), 'sum', 'prod', 'int', 'deriv', 'nthroot', 'vec', 'col'].sort();
 
 export function isBuiltinFunction(name: string) { return name in BUILTINS || name in LAZY_BUILTINS; }
+
+// further Mathcad functions (interpolation, prediction, outlier tests, rank statistics …)
+Object.assign(BUILTINS, EXTRA_BUILTINS);
 
 // lookup tables without prototype: names like "toString" or "__proto__" are not functions/constants
 for (const t of [BUILTINS, LAZY_BUILTINS, PHYS_CONSTANTS, CONSTANTS]) Object.setPrototypeOf(t, null);

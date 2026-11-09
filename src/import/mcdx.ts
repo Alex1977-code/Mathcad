@@ -176,6 +176,7 @@ export async function importMcdx(data: ArrayBuffer | Uint8Array, name: string, p
         const inner = child(content, 'regions');
         const subs = inner ? kids(inner).filter(r => local(r) === 'region') : [];
         const firstConstraint = subs.find(r => r.getAttribute('solve-block-category') === 'constraint');
+        const start = regions.length;
         for (const s of subs) {
           const before = regions.length;
           await handleRegion(s, x, y);
@@ -186,6 +187,12 @@ export async function importMcdx(data: ArrayBuffer | Uint8Array, name: string, p
         if (firstConstraint) {
           regions.push({ id: newId(), type: 'math', x: x - 6, y: y + parseFloat(firstConstraint.getAttribute('top') ?? '0'), src: 'Given' });
         }
+        // Prime evaluates the whole solve block at its top: the parts get evaluation anchors y, y+1, y+2 …
+        // (in their own order), so formulas beside the block further down are evaluated after Find
+        const parts = regions.slice(start).filter(r => r.type === 'math');
+        const key = (r: Region) => r.y + (r.oy ?? 0);
+        parts.sort((a, b) => key(a) - key(b) || a.x - b.x);
+        parts.forEach((r, k) => { r.oy = y + k - r.y; });
         break;
       }
       case 'picture': {

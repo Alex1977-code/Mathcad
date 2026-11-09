@@ -84,6 +84,10 @@ export class Evaluator {
       }
       case 'call': return this.evalCall(n.name, n.args, scope, vec);
       case 'index': {
+        // an undefined name that happens to be a unit (A, C, m …) cannot be indexed: it is not defined
+        if (n.a.k === 'id' && scope.get(n.a.name) === undefined && !n.a.name.startsWith("'") && lookupUnit(n.a.name) !== null) {
+          throw new CalcError(`„${n.a.name}“ ist nicht definiert`, n.a.name);
+        }
         const a = this.eval(n.a, scope, vec);
         const idx = n.idx.map(i => this.eval(i, scope));
         return this.indexGet(a, idx);
@@ -258,7 +262,12 @@ export class Evaluator {
     if (typeof a === 'string' || typeof b === 'string') throw new CalcError('Zeichenketten können nicht dividiert werden');
     if (isMatrix(b) && vec) return this.ew('/', a, b);
     if (isMatrix(a) && !isMatrix(b)) return this.ew('/', a, b);
-    if (isMatrix(b) && !this.isSquare(b as Matrix)) throw new CalcError('Division durch eine nicht-quadratische Matrix');
+    if (isMatrix(b) && !this.isSquare(b as Matrix)) {
+      // scalar / vector: element by element (Mathcad Prime)
+      const sz = (b as Matrix).size();
+      if (!isMatrix(a) && (sz[0] === 1 || sz[1] === 1)) return this.ew('/', a, b);
+      throw new CalcError('Division durch eine nicht-quadratische Matrix');
+    }
     const r = math.divide(a as number, b as number) as Val;
     return this.simplify(r);
   }
@@ -667,7 +676,8 @@ export class Evaluator {
     for (const s of stmts) {
       switch (s.k) {
         case 'assign': last = this.assign(s.target, this.eval(s.value, scope), scope); break;
-        case 'expr': last = this.eval(s.value, scope); break;
+        // an empty placeholder line in a program does nothing (Mathcad Prime)
+        case 'expr': if (s.value.k !== 'placeholder') last = this.eval(s.value, scope); break;
         case 'return': return { flow: 'return', value: this.eval(s.value, scope) };
         case 'break': return { flow: 'break', value: last };
         case 'continue': return { flow: 'continue', value: last };

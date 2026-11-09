@@ -250,9 +250,12 @@ export function percentile(values: number[], p: number): number {
   const v = values.slice().sort((a, b) => a - b);
   if (!v.length) throw new CalcError('percentile: keine Werte');
   if (p < 0 || p > 1) throw new CalcError('percentile: p muss zwischen 0 und 1 liegen');
-  const h = (v.length - 1) * p;
+  // Mathcad: position (n + 1)·p in the sorted values (1-based), linear interpolation, clamped to the ends
+  const h = (v.length + 1) * p;
+  if (h <= 1) return v[0];
+  if (h >= v.length) return v[v.length - 1];
   const lo = Math.floor(h);
-  return v[lo] + (h - lo) * ((v[lo + 1] ?? v[lo]) - v[lo]);
+  return v[lo - 1] + (h - lo) * (v[lo] - v[lo - 1]);
 }
 
 Object.setPrototypeOf(DISTRIBUTIONS, null);

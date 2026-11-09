@@ -622,3 +622,53 @@ describe('Abgleich mit Mathcad bei Anzeigeeinheiten', () => {
     expect(checkResult(2000, exp(2000, L), T)).toBe('mismatch');
   });
 });
+
+describe('Weitere Mathcad-Funktionen (Sollwerte aus Mathcad-Prime-Dateien)', () => {
+  const v = (lines: string[]) => lastVal(lines) as Matrix;
+  const arr = (m: Val) => (isMatrix(m) ? (m as Matrix).toArray().flat() as number[] : [m as number]).map(x => si(x as Val));
+  const close = (a: number[], b: number[], d = 5) => { expect(a.length).toBe(b.length); a.forEach((x, i) => expect(x).toBeCloseTo(b[i], d)); };
+  it('predict (Burg) – interpolation_prediction.mcdx', () => {
+    close(arr(v(['X := [2.7; 5.7; 6.8; 2.9; 5.1; 6.2; 2.5]', 'predict(X, 3, 4) ='])), [3.212307, 6.09936, 4.049281, 2.400082]);
+    close(arr(v(['predict([2.7; 8.2; 1.9; 0.3; 2.7], 4, 3) ='])), [4.652688, 1.319487, 0.979703]);
+  });
+  it('polyint, polyiter, polycoeff, Thielecoeff', () => {
+    const d = ['x := [301; 306; 318; 332; 333]', 'y := [0.02; 0.2; -0.04; 0.06; 0.17]'];
+    close(arr(v([...d, 'polyint(x, y, 328) ='])), [-0.189434, -0.0559588]);
+    close(arr(v([...d, 'polyiter(x, y, 328, 4, 0.01) ='])), [0, 4, -0.189434]);
+    close(arr(v([...d, 'polycoeff(x, y) ='])), [18489.115079, -249.995016, 1.262069, -0.00282051, 0.00000235517], 4);
+    close(arr(v(['Thielecoeff([1; 2; 3; 4; 0], [1; 3/5; 2/5; 5/17; 1]) ='])), [1, -2.5, -1.2, 17.5, 0.2]);
+    const u = ['vx := [4.4; 7.9; 3; 9.1; 2.0; 5.7; 2.6; 4; 8.5; 1.9]', 'X := vx*m', 'Y := 4/vx*s'];
+    close(arr(v([...u, 'polyint(X, Y, 6 m) ='])), [0.667534, 0.00126968]);
+    close(arr(v([...u, 'polyiter(X, Y, 3 m, 5, 0.1 s) ='])), [1, 3, 1.333333]);
+  });
+  it('Splines: lspline natürlich, pspline parabolische Enden', () => {
+    const d = ['vx := [1; 2; 4; 7; 8]', 'vy := [2; 3; 1; 5; 4]', 'l := lspline(vx, vy)', 'p := pspline(vx, vy)', 'fl(t) := interp(l, vx, vy, t)', 'fp(t) := interp(p, vx, vy, t)'];
+    expect(si(lastVal([...d, 'fl(4) =']))).toBeCloseTo(1, 12);
+    expect(si(lastVal([...d, 'g(t) := deriv(fl(t), t, 2)', 'g(1) =']))).toBeCloseTo(0, 4);
+    expect(si(lastVal([...d, 'g(t) := deriv(fp(t), t, 2)', 'g(1) - g(2) =']))).toBeCloseTo(0, 4);
+  });
+  it('Rangstatistik, Kendall, Kontingenztafel, F-Test – statistics.mcdx', () => {
+    const d = ['Meds := [0; 150; 300; 200; 400; 0; 350; 150; 0; 0; 500; 0; 0; 250]', 'Resp := [1; 0; 0; -1; 0; 1; 1; 0; 0; 0; 1; -1; 1; 0]'];
+    close(arr(v([...d, 'Spear(Meds, Resp) ='])), [388, -0.0951279, 0.924213, 0.0263837, 0.928661]);
+    close(arr(v([...d, 'kendltau(Meds, Resp) ='])), [0.0300658, 0.149782, 0.880937]);
+    const T = 'Table := [0, 2, 13, 4; 2, 5, 7, 10; 3, 2, 1, 0]';
+    close(arr(v([T, 'kendltau2(Table) ='])), [-0.232663, -2.358484, 0.0183497]);
+    close(arr(v([T, 'contingtbl(Table) ='])), [21.218324, 6, 0.00167603, 0.46531, 0.549706]);
+    close(arr(v(['Rank([0.1; -0.86; -1.075; -2.72; -2.64]) ='])), [5, 4, 3, 1, 2]);
+  });
+  it('Ausreißertests – grubbs.mcdx', () => {
+    const d = ['v := [12.1; 11.8; 12.4; 12.0; 11.9; 12.3; 12.2; 11.7; 12.5; 12.1; 11.95; 12.05; 12.35; 11.85; 12.15; 12.25; 11.75; 12.45; 12.6; 13.3]'];
+    close(arr(v([...d, 'Grubbs(v, 0.95) ='])), [19, 3.113177, -0.404932]);
+    close(arr(v([...d, 'GrubbsClassic(v, 0.999) ='])), [19, 3.113177, 0.200598]);
+    close(arr(v([...d, 'ThreeSigma(v) ='])), [19, 3.113177]);
+    expect(last([...d, 'rows(trim(v, [3; 19])) ='])).toBe('18');
+  });
+  it('percentile wie Mathcad ((n+1)·p), match spaltenweise, Skalar/Vektor', () => {
+    expect(last(['i := 0..10', 'X[i] := i', 'percentile(X, 0.90) ='])).toBe('9.8');
+    expect(last(['percentile([79; 85; 55.2; 86; 81], 0.25) ='])).toBe('67.1');
+    expect(last(['s := [1, 3; 3, 2]', 'match(3, s)[0] ='])).toBe('[1; 0]');
+    expect(last(['vx := [2; 4]', '4/vx ='])).toBe('[2; 1]');
+    expect(last(['f(e) :=\n  r ← 2*e\n  ?\n  r', 'f(-2) ='])).toBe('-4');
+    expect(last(['A[0, 0] ='])).toMatch(/„A“ ist nicht definiert/);
+  });
+});

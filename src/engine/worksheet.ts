@@ -569,7 +569,7 @@ function isConstraint(n: Node): boolean {
   const x = n.k === 'paren' ? n.a : n;
   return x.k === 'bin' && ['==', '<', '>', '<=', '>='].includes(x.op);
 }
-const RANDOM = /^(rnd|Seed|r(norm|unif|binom|beta|chisq|t|F|exp|gamma|lnorm|logis|pois|geom|nbinom|weibull|cauchy))$/;
+const RANDOM = /^(rnd|Seed|r(norm|unif|binom|beta|chisq|t|F|exp|gamma|lnorm|logis|pois|geom|nbinom|weibull|cauchy|hypergeom))$/;
 function usesRandom(p: MathStmt): boolean {
   let found = false;
   const e = p.kind === 'define' || p.kind === 'eval' || p.kind === 'expr' ? p.expr : null;
