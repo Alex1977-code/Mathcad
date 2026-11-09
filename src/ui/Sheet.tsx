@@ -305,7 +305,7 @@ export function Sheet({ result, onOpenExample, onImport, pending }: Props) {
                   {r.type === 'plot' && (
                     <>
                       <PlotRegionView region={r} data={res?.plot} onEdit={() => store.set({ plotEditor: r.id, selection: [r.id] })} />
-                      {sel && <span title="Größe ändern" onMouseDown={(e) => onResizeMouseDown(e, r)} style={{ position: 'absolute', right: -5, bottom: -5, width: 12, height: 12, borderRadius: 3, background: 'var(--accent)', cursor: 'nwse-resize' }} />}
+                      {sel && <span className="resize-handle" title="Größe ändern" onMouseDown={(e) => onResizeMouseDown(e, r)} style={{ position: 'absolute', right: -5, bottom: -5, width: 12, height: 12, borderRadius: 3, background: 'var(--accent)', cursor: 'nwse-resize' }} />}
                     </>
                   )}
                   {r.type === 'image' && (

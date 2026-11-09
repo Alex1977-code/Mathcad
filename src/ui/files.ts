@@ -1,7 +1,7 @@
 import { normalizeWorksheet, type Worksheet } from '../engine/model';
 // the Mathcad importers (with JSZip) are loaded only when a file is opened
 const ACCEPTED_EXTENSIONS = '.fwk,.json,.xmcd,.mcdx,.mcd';
-import { regionElements } from './layout';
+import { collectCss, withLightTheme } from './exporters';
 
 type FileHandle = { name: string; createWritable(): Promise<{ write(d: Blob): Promise<void>; close(): Promise<void> }> };
 let currentHandle: FileHandle | null = null;
@@ -43,81 +43,82 @@ export function safeName(title: string) {
   return (title || 'Arbeitsblatt').replace(/[\\/:*?"<>|]+/g, '_').trim() || 'Arbeitsblatt';
 }
 
-/** Save as .fwk – uses the File System Access API when available. */
-export async function saveWorksheet(ws: Worksheet, saveAs = false): Promise<string | null> {
-  const blob = new Blob([serialize({ ...ws, source: ws.source ? { ...ws.source } : undefined })], { type: 'application/json' });
+export interface SaveResult { name: string; /** true: written in another format (the document itself stays unsaved). */ exported: boolean }
+
+/** Producers of the export formats offered in "Speichern unter". */
+export interface ExportMakers { docx: () => Promise<Blob>; html: () => Promise<Blob> }
+
+const SAVE_TYPES = [
+  { description: 'FormelWerk-Arbeitsblatt', accept: { 'application/json': ['.fwk'] } },
+  { description: 'Word-Dokument', accept: { 'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'] } },
+  { description: 'Webseite (HTML)', accept: { 'text/html': ['.html'] } },
+];
+
+const formatOf = (name: string): 'fwk' | 'docx' | 'html' => (/\.docx$/i.test(name) ? 'docx' : /\.html?$/i.test(name) ? 'html' : 'fwk');
+
+/**
+ * Save (Ctrl+S) or "Speichern unter" with a choice of file type: .fwk, .docx or .html. Uses the File System
+ * Access API when available; otherwise the browser downloads the file, and "Speichern unter" asks for the name.
+ */
+export async function saveWorksheet(ws: Worksheet, saveAs = false, makers?: ExportMakers): Promise<SaveResult | null> {
+  const fwkBlob = () => new Blob([serialize({ ...ws, source: ws.source ? { ...ws.source } : undefined })], { type: 'application/json' });
+  const blobFor = async (fmt: 'fwk' | 'docx' | 'html') => (fmt === 'fwk' || !makers ? fwkBlob() : fmt === 'docx' ? makers.docx() : makers.html());
   const w = window as unknown as { showSaveFilePicker?: (o: unknown) => Promise<FileHandle> };
   if (w.showSaveFilePicker && window.isSecureContext) {
     try {
-      if (!currentHandle || saveAs) {
-        currentHandle = await w.showSaveFilePicker({
-          suggestedName: safeName(ws.title) + '.fwk',
-          types: [{ description: 'FormelWerk-Arbeitsblatt', accept: { 'application/json': ['.fwk'] } }],
-        });
+      let handle = currentHandle;
+      if (!handle || saveAs) {
+        handle = await w.showSaveFilePicker({ suggestedName: safeName(ws.title) + '.fwk', types: makers && saveAs ? SAVE_TYPES : SAVE_TYPES.slice(0, 1) });
       }
-      const wr = await currentHandle!.createWritable();
+      const fmt = formatOf(handle!.name);
+      const blob = await blobFor(fmt);
+      const wr = await handle!.createWritable();
       await wr.write(blob);
       await wr.close();
-      return currentHandle!.name;
+      // only the own format becomes the document's file; an export leaves it as it was
+      if (fmt === 'fwk') currentHandle = handle;
+      return { name: handle!.name, exported: fmt !== 'fwk' };
     } catch (e) {
       if ((e as Error).name === 'AbortError') return null;
     }
   }
-  const name = safeName(ws.title) + '.fwk';
-  download(name, blob);
-  return name;
+  let name = safeName(ws.title) + '.fwk';
+  if (saveAs) {
+    const answer = window.prompt('Dateiname (Endung .fwk, .docx oder .html bestimmt das Format):', name);
+    if (answer === null || !answer.trim()) return null;
+    name = safeName(answer.trim());
+    if (!/\.(fwk|docx|html?)$/i.test(name)) name += '.fwk';
+  }
+  const fmt = formatOf(name);
+  download(name, await blobFor(fmt));
+  return { name, exported: fmt !== 'fwk' };
 }
 
 export function resetFileHandle() { currentHandle = null; }
 
-/** Export the rendered worksheet as a standalone HTML page (light theme, formula fonts embedded). */
-export async function exportHtml(ws: Worksheet) {
+/** Download a finished export. */
+export function downloadBlob(name: string, data: Blob) { download(name, data); }
+
+/** The rendered worksheet as a standalone HTML page (light theme, formula fonts embedded). */
+export async function htmlBlob(ws: Worksheet): Promise<Blob> {
   const page = document.querySelector('.page') as HTMLElement | null;
-  if (!page) return;
+  if (!page) throw new Error('Kein Arbeitsblatt');
   const clone = page.cloneNode(true) as HTMLElement;
   clone.style.transform = 'none';
-  clone.querySelectorAll('.grip,.check-badge,.crosshair,.welcome,.page-break-line,.page-margin,.plot-edit-btn,.error-chip').forEach(e => e.remove());
+  clone.querySelectorAll('.grip,.check-badge,.crosshair,.welcome,.page-break-line,.page-margin,.plot-edit-btn,.error-chip,.print-footer').forEach(e => e.remove());
   clone.querySelectorAll('.region').forEach(e => e.classList.remove('selected', 'editing'));
-  const fontCache = new Map<string, string>();
-  const parts: string[] = [];
-  for (const sheet of Array.from(document.styleSheets)) {
-    let rules: CSSRule[];
-    try { rules = Array.from(sheet.cssRules); } catch { continue; }
-    for (const r of rules) {
-      // the export is always light: drop the dark variants
-      if (r instanceof CSSMediaRule && /prefers-color-scheme/.test(r.conditionText)) continue;
-      if (/\[data-theme="?dark"?\]/.test(r.cssText)) continue;
-      if (r instanceof CSSFontFaceRule) {
-        // embed the woff2 font so formulas look right offline
-        const m = /url\(["']?([^"')]+\.woff2)["']?\)/.exec(r.cssText);
-        if (!m) continue;
-        const url = new URL(m[1], sheet.href ?? location.href).href;
-        let data = fontCache.get(url);
-        if (data === undefined) {
-          try { data = `data:font/woff2;base64,${bytesToB64(new Uint8Array(await (await fetch(url)).arrayBuffer()))}`; } catch { data = ''; }
-          fontCache.set(url, data);
-        }
-        if (!data) continue;
-        const desc = r.cssText.replace(/src:[^;]+;/, `src: url(${data}) format("woff2");`);
-        parts.push(desc);
-        continue;
-      }
-      parts.push(r.cssText);
-    }
-  }
+  const css = await collectCss();
   const title = String(ws.title ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
   const html = `<!doctype html><html lang="de" data-theme="light"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title}</title>
-<style>${parts.join('\n')}
+<style>${css}
 :root{color-scheme:light}body{overflow:auto;background:#eef0f4;color:#1d2330}.page{margin:24px auto;background:#fff;background-image:none}.region{border-color:transparent!important;background:transparent!important}</style></head>
 <body><div class="page" style="${(clone.getAttribute('style') ?? '').replace(/"/g, '&quot;')}">${clone.innerHTML}</div></body></html>`;
-  download(safeName(String(ws.title ?? '')) + '.html', new Blob([html], { type: 'text/html' }));
-  void regionElements;
+  return new Blob([html], { type: 'text/html' });
 }
 
-function bytesToB64(bytes: Uint8Array): string {
-  let s = '';
-  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  return btoa(s);
+/** Export the rendered worksheet as a standalone HTML page. */
+export async function exportHtml(ws: Worksheet) {
+  download(safeName(String(ws.title ?? '')) + '.html', await withLightTheme(() => htmlBlob(ws)));
 }
 
 export const AUTOSAVE = 'formelwerk.autosave.v1';

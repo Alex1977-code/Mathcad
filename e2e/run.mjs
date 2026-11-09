@@ -257,21 +257,63 @@ try {
   // symbolic evaluation: "->" becomes →, keywords after the arrow
   await page.mouse.click(700, 260);
   for (const t of ['x^2+2*x*x->', '(x+1)^2-> expand', 'p*z+q==0-> solve, z']) { await page.keyboard.type(t); await page.keyboard.press('Enter'); }
-  await idle();
+  await page.waitForTimeout(400); await idle(); await page.waitForFunction(() => !document.querySelector('.region.pending'));
   const symTexts = await page.locator('.region.math-region').evaluateAll(els => els.slice(-3).map(e => e.innerText.replace(/\s+/g, '')));
   ok(/3[·⋅]?x2$/.test(symTexts[0]) && /x2\+2[·⋅]?x\+1$/.test(symTexts[1]) && /−?−pq|−qp/.test(symTexts[2]) && (await page.locator('.region.error').count()) === 0,
     `Symbolisch: x²+2x·x → 3x², (x+1)² → expand, p·z+q=0 → solve (${JSON.stringify(symTexts)})`);
   for (const t of ['int(x*exp(x),x)->', '[x+y==10;x-y==2]-> solve, x, y', 'x^2-5*x+6-> factor', 'exp(x)-> series, x = 0, 4']) { await page.keyboard.type(t); await page.keyboard.press('Enter'); }
-  await idle();
+  await page.waitForTimeout(400); await idle(); await page.waitForFunction(() => !document.querySelector('.region.pending'));
   const sym2 = await page.locator('.region.math-region').evaluateAll(els => els.slice(-4).map(e => e.innerText.replace(/\s+/g, '')));
   ok(/→ex[·⋅]\(x−1\)$/.test(sym2[0]) && /solve,x,y.*6.*4/.test(sym2[1]) && /\(x−2\)[·⋅]?\(x−3\)/.test(sym2[2]) && /1\+x\+/.test(sym2[3]) && (await page.locator('.region.error').count()) === 0,
     `Symbolisch: Integral, Gleichungssystem, factor, series (${JSON.stringify(sym2)})`);
   for (const t of ['sum(i^2,i,1,n)->', 'lim(sin(x)/x,x,0)->', '(x^3+1)/(x^2-3*x+2)-> parfrac']) { await page.keyboard.type(t); await page.keyboard.press('Enter'); }
-  await idle();
+  await page.waitForTimeout(400); await idle(); await page.waitForFunction(() => !document.querySelector('.region.pending'));
   const sym3 = await page.locator('.region.math-region').evaluateAll(els => els.slice(-3).map(e => e.innerText.replace(/\s+/g, '')));
   ok(/n[·⋅]\(n\+1\)[·⋅]\(2[·⋅]n\+1\)/.test(sym3[0]) && /→1$/.test(sym3[1]) && /x\+3−/.test(sym3[2]) && (await page.locator('.region.error').count()) === 0,
     `Symbolisch: Summe, Grenzwert, Partialbrüche (${JSON.stringify(sym3)})`);
   await shot('14-symbolisch.png');
+
+  /* 12c · Word export, "Speichern unter" with a file type, clipboard, print layout */
+  {
+    const JSZip = require('jszip');
+    const dlw = page.waitForEvent('download');
+    await page.keyboard.press('Control+k'); await page.waitForTimeout(150); await page.keyboard.type('Word-Dokument'); await page.keyboard.press('Enter');
+    const zipW = await JSZip.loadAsync(readFileSync(await (await dlw).path()));
+    const docXml = await zipW.file('word/document.xml').async('string');
+    const eqs = (docXml.match(/<m:oMath>/g) ?? []).length;
+    ok(eqs >= 10 && Object.keys(zipW.files).some(f => f.startsWith('word/media/')) && /NUMPAGES/.test(await zipW.file('word/footer1.xml').async('string')),
+      `Word-Export: ${eqs} echte Formeln (OMML), Diagramm als Bild, Fußzeile mit Seitenzahl`);
+    // "Speichern unter" without a file dialog: asks for the name, the extension picks the format
+    page.removeAllListeners('dialog');
+    page.once('dialog', (d) => d.accept('Bericht.docx').catch(() => undefined));
+    const dls = page.waitForEvent('download');
+    await page.keyboard.press('Control+Shift+s');
+    const sZip = await JSZip.loadAsync(readFileSync(await (await dls).path()));
+    page.on('dialog', (d) => d.accept().catch(() => undefined));
+    ok(!!sZip.file('word/document.xml'), 'Speichern unter: Dateiname „Bericht.docx“ erzeugt ein Word-Dokument');
+    // clipboard: text from another program becomes formulas and text
+    await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+    await page.evaluate(() => navigator.clipboard.writeText('Nachweis der Durchbiegung\nw := 3 mm\nw*2 ='));
+    const pgb = await page.locator('.page').boundingBox();
+    await page.evaluate(() => { document.querySelector('.scroller').scrollTop = 0; });
+    await page.mouse.click(pgb.x + 560, pgb.y + 700);
+    const before = await page.locator('.region').count();
+    await page.keyboard.press('Control+v');
+    await idle();
+    const after = await page.locator('.region').count(), lastTxt = await lastRegionText();
+    ok(after === before + 3 && /0\.006\s*m/.test(lastTxt),
+      `Einfügen aus anderen Programmen: Text- und Formelzeilen werden Text- und Formelbereiche (w·2 = 0.006 m; ${before}→${after}, ${JSON.stringify(lastTxt)})`);
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press('Control+c');
+    const html = await page.evaluate(async () => { const it = await navigator.clipboard.read(); return (await (await it[0].getType('text/html')).text()); });
+    ok(/msEquation/.test(html) && /<m:oMath>/.test(html), 'Kopieren: Formeln als Word-Gleichungen (OMML) in der Zwischenablage');
+    await page.keyboard.press('Escape');
+    // print: footers with page numbers, light colours
+    await page.evaluate(() => window.dispatchEvent(new Event('beforeprint')));
+    const pr = await page.evaluate(() => ({ n: document.querySelectorAll('.print-footer').length, t: document.querySelector('.print-footer')?.textContent, theme: document.documentElement.dataset.theme }));
+    await page.evaluate(() => window.dispatchEvent(new Event('afterprint')));
+    ok(pr.n >= 1 && /Seite 1 von/.test(pr.t ?? '') && pr.theme === 'light' && (await page.locator('.print-footer').count()) === 0, `Drucken: Fußzeile „${pr.t}“, helles Farbschema, danach wiederhergestellt`);
+  }
 
   /* 13 · responsiveness on a large imported sheet: an edit at the end is recalculated incrementally */
   {

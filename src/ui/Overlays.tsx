@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { store, useStore } from './store';
 import {
-  alignSelection, canPaste, commands, copySelection, deleteSelection, duplicateSelection, editSelection, insertRegion, paste,
+  alignSelection, canPaste, commands, copyImageWithToast, copySelection, deleteSelection, duplicateSelection, editSelection, insertRegion, paste,
   selectAll, separateAll, toggleDisabled,
 } from './actions';
 import { compatibleUnits, copyResult, currentUnit, equationUnknown, plotFunction, plottableFunction, resultOf, setDisplayUnit, solveEquation, toggleShowValue, toggleValue, withDisplayUnit } from './smart';
@@ -60,6 +60,7 @@ export function ContextMenu() {
       'sep',
       { label: 'Ausschneiden', keys: 'Strg+X', run: () => copySelection(true) },
       { label: 'Kopieren', keys: 'Strg+C', run: () => copySelection(false) },
+      { label: 'Als Bild kopieren', run: copyImageWithToast },
       { label: 'Duplizieren', keys: 'Strg+D', run: duplicateSelection },
       ...(multi ? ['sep' as const, { label: 'Links ausrichten', run: () => alignSelection('left') }, { label: 'Oben ausrichten', run: () => alignSelection('top') }] : []),
       'sep',

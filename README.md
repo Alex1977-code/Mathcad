@@ -90,7 +90,11 @@ Messung (`npx tsx scripts/bench.mts`, Node 22):
 ### Dateien
 
 - **Speichern/Öffnen** im eigenen Format `.fwk` (JSON). Zusätzlich automatische Sicherung im Browser.
-- **Export** als eigenständige HTML-Seite oder **Drucken / PDF** (A4).
+- **Speichern unter** (`Strg+Umschalt+S`) mit Dateityp: FormelWerk (`.fwk`), Word (`.docx`) oder Webseite (`.html`). In Browsern ohne Dateidialog-Schnittstelle (z. B. Firefox, Safari) wird nach dem Dateinamen gefragt; die Endung bestimmt das Format.
+- **Word-Export** (`.docx`): Formeln werden **echte, bearbeitbare Word-Formeln** (OMML) – Brüche, Wurzeln, Indizes, Matrizen, Summen/Integrale, Programme, Ergebnisse mit Einheiten; Texte mit Formatierung und Überschriften, Bilder und Diagramme als Grafik, nebeneinanderliegende Bereiche über Tabstopps, Fußzeile mit Titel und „Seite n von N“. Geprüft mit python-docx und LibreOffice.
+- **Drucken / PDF** (`Strg+P`, A4): immer im hellen Farbschema, Fußzeile mit Titel, Datum und Seitenzahl, Bereiche werden an Seitengrenzen nicht zerschnitten (ganze Zeilen rücken auf die nächste Seite), manuelle Seitenumbrüche wirken. Etwas zu breite Blätter werden auf Seitenbreite verkleinert; Nebenrechnungen weit rechts neben der Seite werden wie bei Mathcads „Nur Seitenbreite drucken“ weggelassen.
+- **Zwischenablage**: `Strg+C` legt Formeln als Text und – für Word – als Gleichungen (OMML) ab; *Als Bild kopieren* (Kontextmenü) liefert ein PNG für Word, PowerPoint oder E-Mail. `Strg+V` fügt Text aus anderen Programmen ein: Formelzeilen werden Formeln (auch `≔`), übrige Zeilen Textbereiche; Bilder aus der Zwischenablage werden Bildbereiche.
+- **Export** als eigenständige HTML-Seite (Schriften eingebettet).
 - **Hell- und Dunkelmodus**, Zoom, Drag & Drop von Dateien auf das Fenster.
 
 ## Import von Mathcad-Dateien
@@ -141,8 +145,12 @@ src/engine/   Rechenkern (unabhängig von der Oberfläche)
   symbolic.ts    symbolische Auswertung → (Einsetzen, Vereinfachen, Ableiten, expand/float/solve)
   verify.ts      Vergleich mit gespeicherten Mathcad-Ergebnissen
 src/import/   Mathcad-Import (math30/math50-XML → Syntaxbaum → Text)
+src/export/   Word-Export: LaTeX → Office-Math (OMML), DOCX-Paket
 src/ui/       React-Oberfläche; Berechnung läuft in einem Web Worker
   actions.ts     zentrale Befehle (Menüband, Kontextmenü, Befehlspalette, Tastenkürzel)
+  print.ts       Drucklayout (Seitenumbrüche, Fußzeilen, Skalierung)
+  clipboard.ts   Zwischenablage (Text, Word-Gleichungen, Einfügen aus anderen Programmen)
+  exporters.ts   Word-Export, Bilder von Bereichen und Diagrammen
   smart.ts       Formel-Umschreibungen für Einheitenwahl, Wert anzeigen, Diagramm aus Funktion, Gleichung lösen
 ```
 

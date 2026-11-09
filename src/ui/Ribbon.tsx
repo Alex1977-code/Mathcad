@@ -119,6 +119,7 @@ export function Ribbon() {
               <button onClick={() => { close(); app.save(); }}>Speichern<kbd>Strg+S</kbd></button>
               <button onClick={() => { close(); app.save(true); }}>Speichern unter …<kbd>Strg+⇧+S</kbd></button>
               <hr />
+              <button onClick={() => { close(); app.exportDocx(); }}>Als Word (.docx) exportieren</button>
               <button onClick={() => { close(); app.exportHtml(); }}>Als HTML exportieren</button>
               <button onClick={() => { close(); app.print(); }}>Drucken / als PDF<kbd>Strg+P</kbd></button>
               <hr />

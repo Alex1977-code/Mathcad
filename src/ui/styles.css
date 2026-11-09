@@ -559,11 +559,16 @@ button.status-item:hover { background: var(--bg-hover); }
   .app, .main { display: block; height: auto; }
   .scroller { overflow: visible; }
   .page-outer { padding: 0; display: block; }
-  .page { box-shadow: none; background: #fff !important; transform: none !important; margin: 0; border-radius: 0; }
+  .page { box-shadow: none; background: #fff !important; transform: none !important; zoom: var(--print-scale, 1); margin: 0; border-radius: 0; }
+  html, body { width: 794px; }
+  .page { overflow: hidden; }
+  .page-outer > div { overflow: hidden; width: 794px !important; }
   .region { border-color: transparent !important; background: transparent !important; box-shadow: none !important; }
-  .pagebreak-region { break-after: page; }
-  .pagebreak-region::before, .pagebreak-region span { display: none; }
+  .pagebreak-region { visibility: hidden; }
+  .print-footer { display: flex !important; }
+  .math-view .fw-result, .math-view .fw-sym { color: #1d4ed8; }
 }
+.print-footer { display: none; position: absolute; justify-content: space-between; font: 9pt var(--font-ui); color: #6b7280; border-top: 1px solid #d1d5db; padding-top: 4px; pointer-events: none; }
 
 /* recovery page of the error boundary */
 .crash { max-width: 640px; margin: 15vh auto; padding: 24px; font-family: system-ui, sans-serif; color: var(--text, #1d2330); }

@@ -8,6 +8,7 @@ import { getActiveEditor } from './editing';
 import { MARGIN, regionElements, separateRegions, snap } from './layout';
 import { pickFile } from './files';
 import { quickPlotAtCursor } from './smart';
+import { cursorOrDefault, imageRegionFromFile, insertForeign, regionsFromText, regionsHtml, regionsPlainText } from './clipboard';
 
 export function newMathRegion(x: number, y: number, src = ''): Region {
   return { id: newId(), type: 'math', x, y, src };
@@ -91,15 +92,75 @@ export function separateAll(history = true) {
 let clip: Region[] = [];
 const CLIP_KEY = 'formelwerk.clipboard';
 
+/** Plain text this app last put on the system clipboard (to recognise its own regions when pasting). */
+let lastCopiedText: string | null = null;
+
+function remember(regs: Region[]) {
+  clip = regs;
+  try { sessionStorage.setItem(CLIP_KEY, JSON.stringify(regs)); } catch { /* ignore */ }
+}
+
+/** copy / cut event: plain text and HTML (Word equations) on the system clipboard, regions internally. */
+export function handleCopyEvent(e: ClipboardEvent, cut: boolean): boolean {
+  const s = store.get();
+  const regs = s.ws.regions.filter(r => s.selection.includes(r.id));
+  if (!regs.length || !e.clipboardData) return false;
+  remember(regs);
+  const text = regionsPlainText(regs);
+  lastCopiedText = text;
+  e.clipboardData.setData('text/plain', text);
+  try { e.clipboardData.setData('text/html', regionsHtml(regs)); } catch { /* plain text is enough */ }
+  e.preventDefault();
+  if (cut) store.deleteRegions(s.selection);
+  return true;
+}
+
 export function copySelection(cut = false) {
+  // through the browser's copy command: fills the clipboard in the copy event (no permission needed)
+  let ok = false;
+  try { ok = document.execCommand(cut ? 'cut' : 'copy'); } catch { ok = false; }
+  if (ok) return;
   const s = store.get();
   const regs = s.ws.regions.filter(r => s.selection.includes(r.id));
   if (!regs.length) return;
-  clip = regs;
-  try { sessionStorage.setItem(CLIP_KEY, JSON.stringify(regs)); } catch { /* ignore */ }
-  const text = regs.filter(r => r.type === 'math').map(r => (r as MathRegion).src).join('\n');
-  navigator.clipboard?.writeText(text).catch(() => undefined);
+  remember(regs);
+  lastCopiedText = regionsPlainText(regs);
+  navigator.clipboard?.writeText(lastCopiedText).catch(() => undefined);
   if (cut) store.deleteRegions(s.selection);
+}
+
+/** paste event: own regions, or text / pictures from other programs. */
+export function handlePasteEvent(e: ClipboardEvent): boolean {
+  const dt = e.clipboardData;
+  const at = cursorOrDefault();
+  const text = dt?.getData('text/plain') ?? '';
+  const files = Array.from(dt?.files ?? []).filter(f => f.type.startsWith('image/'));
+  if (text && text === lastCopiedText && canPaste()) { e.preventDefault(); paste(); return true; }
+  if (files.length) {
+    e.preventDefault();
+    Promise.all(files.map((f, i) => imageRegionFromFile(f, { x: at.x, y: at.y + i * 24 }))).then(insertForeign).catch(() => undefined);
+    return true;
+  }
+  if (text.trim()) { e.preventDefault(); insertForeign(regionsFromText(text, at)); return true; }
+  if (canPaste()) { e.preventDefault(); paste(); return true; }
+  return false;
+}
+
+export function copyImageWithToast() {
+  copyAsImage().then(ok => app.notify(ok ? 'Als Bild in die Zwischenablage kopiert' : 'Bild-Kopieren wird von diesem Browser nicht unterstützt', !ok))
+    .catch(e => app.notify('Kopieren fehlgeschlagen: ' + (e as Error).message, true));
+}
+
+/** Selected regions as a picture on the clipboard (for Word, PowerPoint, e-mail …). */
+export async function copyAsImage(): Promise<boolean> {
+  const s = store.get();
+  if (!s.selection.length) return false;
+  const { regionsToPng } = await import('./exporters');
+  const png = regionsToPng(s.selection).then(p => { if (!p) throw new Error('Bild konnte nicht erzeugt werden'); return p.blob; });
+  const C = (window as unknown as { ClipboardItem?: new (d: Record<string, Promise<Blob> | Blob>) => unknown }).ClipboardItem;
+  if (!C || !navigator.clipboard?.write) return false;
+  await navigator.clipboard.write([new C({ 'image/png': png }) as ClipboardItem]);
+  return true;
 }
 
 export function canPaste() {
@@ -181,7 +242,8 @@ export function changeDecimals(d: number) {
 
 export interface AppHandlers {
   openFile: () => void; save: (as?: boolean) => void; newDoc: () => void; openExample: () => void;
-  exportHtml: () => void; print: () => void; toggleTheme: () => void; showReport: () => void;
+  exportHtml: () => void; exportDocx: () => void; print: () => void; toggleTheme: () => void; showReport: () => void;
+  notify: (text: string, err?: boolean) => void;
 }
 let handlers: AppHandlers | null = null;
 export function setAppHandlers(h: AppHandlers) { handlers = h; }
@@ -199,6 +261,7 @@ export function commands(): Command[] {
     { id: 'open', group: 'Datei', label: 'Öffnen / Mathcad-Datei importieren …', keys: 'Strg+O', run: () => app.openFile() },
     { id: 'save', group: 'Datei', label: 'Speichern', keys: 'Strg+S', run: () => app.save() },
     { id: 'saveas', group: 'Datei', label: 'Speichern unter …', keys: 'Strg+Umschalt+S', run: () => app.save(true) },
+    { id: 'docx', group: 'Datei', label: 'Als Word-Dokument (.docx) exportieren', run: () => app.exportDocx(), tags: 'word docx office export' },
     { id: 'html', group: 'Datei', label: 'Als HTML exportieren', run: () => app.exportHtml() },
     { id: 'print', group: 'Datei', label: 'Drucken / als PDF speichern', keys: 'Strg+P', run: () => app.print() },
     { id: 'example', group: 'Datei', label: 'Beispiel öffnen', run: () => app.openExample() },
@@ -207,6 +270,7 @@ export function commands(): Command[] {
     { id: 'cut', group: 'Bearbeiten', label: 'Ausschneiden', keys: 'Strg+X', run: () => copySelection(true), when: hasSel },
     { id: 'copy', group: 'Bearbeiten', label: 'Kopieren', keys: 'Strg+C', run: () => copySelection(false), when: hasSel },
     { id: 'paste', group: 'Bearbeiten', label: 'Einfügen', keys: 'Strg+V', run: () => paste(), when: canPaste },
+    { id: 'copyimg', group: 'Bearbeiten', label: 'Als Bild kopieren', run: () => copyImageWithToast(), when: hasSel, tags: 'png bild zwischenablage word' },
     { id: 'dup', group: 'Bearbeiten', label: 'Duplizieren', keys: 'Strg+D', run: duplicateSelection, when: hasSel },
     { id: 'del', group: 'Bearbeiten', label: 'Löschen', keys: 'Entf', run: deleteSelection, when: hasSel },
     { id: 'all', group: 'Bearbeiten', label: 'Alles auswählen', keys: 'Strg+A', run: selectAll },

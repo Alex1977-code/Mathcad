@@ -7,10 +7,12 @@ import { Ribbon } from './Ribbon';
 import { SidePanel } from './SidePanel';
 import { ContextMenu, CommandPalette, UnitPicker } from './Overlays';
 import { setLatestResult } from './smart';
-import { autosave, exportHtml, loadAutosave, pickFile, readWorksheet, resetFileHandle, saveWorksheet } from './files';
+import { autosave, downloadBlob, exportHtml, htmlBlob, loadAutosave, pickFile, readWorksheet, resetFileHandle, safeName, saveWorksheet } from './files';
+import { makeDocx, withLightTheme } from './exporters';
+import { installPrintHooks } from './print';
 import { exampleWorksheet } from './examples';
 import {
-  copySelection, duplicateSelection, insertMatrix, paste, recalcNow, selectAll, separateAll, setAppHandlers, setZoom, showSide, toggleAutoCalc,
+  duplicateSelection, handleCopyEvent, handlePasteEvent, insertMatrix, recalcNow, selectAll, separateAll, setAppHandlers, setZoom, showSide, toggleAutoCalc,
   toggleSide, zoomBy,
 } from './actions';
 import { IconImport, IconMoon, IconPanel, IconRedo, IconSave, IconSun, IconUndo } from './icons';
@@ -43,6 +45,8 @@ export function App() {
   const recalcTick = useStore(s => s.recalcTick);
   const { result, busy, error, progress, recalc, computedWs } = useCompute(ws, 60, autoCalc);
   setLatestResult(result);
+  const latestResult = useRef(result);
+  latestResult.current = result;
   const [theme, toggleTheme] = useTheme();
   const [report, setReport] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
@@ -50,6 +54,7 @@ export function App() {
   const pendingSeparate = useRef(false);
 
   useEffect(() => { if (recalcTick) recalc(); }, [recalcTick]);
+  useEffect(() => { installPrintHooks(); }, []);
   const stale = !autoCalc && !!computedWs && computedWs !== ws;
 
   const notify = (text: string, err = false) => {
@@ -99,9 +104,21 @@ export function App() {
       notify((e as Error).message, true);
     }
   };
+  const makers = { docx: () => makeDocx(store.get().ws, latestResult.current), html: () => withLightTheme(() => htmlBlob(store.get().ws)) };
   const save = async (as = false) => {
-    const name = await saveWorksheet(store.get().ws, as);
-    if (name) { store.set({ dirty: false, fileName: name }); notify(`Gespeichert: ${name}`); }
+    try {
+      const r = await saveWorksheet(store.get().ws, as, makers);
+      if (!r) return;
+      if (r.exported) notify(`Exportiert: ${r.name}`);
+      else { store.set({ dirty: false, fileName: r.name }); notify(`Gespeichert: ${r.name}`); }
+    } catch (e) { notify('Speichern fehlgeschlagen: ' + (e as Error).message, true); }
+  };
+  const exportDocx = async () => {
+    try {
+      const ws = store.get().ws;
+      downloadBlob(safeName(String(ws.title ?? '')) + '.docx', await makers.docx());
+      notify('Word-Dokument exportiert');
+    } catch (e) { notify('Export fehlgeschlagen: ' + (e as Error).message, true); }
   };
   const newDoc = () => { if (!confirmDiscard()) return; resetFileHandle(); store.load(emptyWorksheet(), null); };
   const openExample = () => { if (!confirmDiscard()) return; resetFileHandle(); store.load(exampleWorksheet(), null); };
@@ -109,6 +126,8 @@ export function App() {
   setAppHandlers({
     openFile: () => openFile(), save: (as) => save(as), newDoc, openExample,
     exportHtml: () => { exportHtml(store.get().ws).catch(e => notify('Export fehlgeschlagen: ' + (e as Error).message, true)); }, print: () => setTimeout(() => window.print(), 50),
+    exportDocx: () => { void exportDocx(); },
+    notify: (text: string, err?: boolean) => notify(text, err),
     toggleTheme, showReport: () => setReport(true),
   });
 
@@ -129,9 +148,7 @@ export function App() {
       if (mod && k === 'z' && !e.shiftKey) { e.preventDefault(); store.undo(); return; }
       if (mod && (k === 'y' || (k === 'z' && e.shiftKey))) { e.preventDefault(); store.redo(); return; }
       if (mod && k === 'a') { e.preventDefault(); selectAll(); return; }
-      if (mod && k === 'c') { e.preventDefault(); copySelection(false); return; }
-      if (mod && k === 'x') { e.preventDefault(); copySelection(true); return; }
-      if (mod && k === 'v') { e.preventDefault(); paste(); return; }
+      // Ctrl+C / X / V: handled by the copy, cut and paste events below (system clipboard)
       if (mod && k === 'd') { e.preventDefault(); duplicateSelection(); return; }
       if (mod && k === 'm' && !e.altKey) { e.preventDefault(); insertMatrix(3, 3); return; }
       if (mod && (e.key === '+' || e.key === '=')) { e.preventDefault(); zoomBy(0.1); return; }
@@ -139,6 +156,18 @@ export function App() {
       if (mod && e.key === '0') { e.preventDefault(); setZoom(1); return; }
     };
     window.addEventListener('keydown', onKey);
+    const inField = (t: EventTarget | null) => !!(t as HTMLElement | null)?.closest?.('input, textarea, [contenteditable="true"], select');
+    const onCopy = (e: ClipboardEvent) => {
+      if (store.get().editing || inField(e.target) || inField(document.activeElement)) return;
+      handleCopyEvent(e, e.type === 'cut');
+    };
+    const onPaste = (e: ClipboardEvent) => {
+      if (store.get().editing || inField(e.target) || inField(document.activeElement) || store.get().palette) return;
+      handlePasteEvent(e);
+    };
+    document.addEventListener('copy', onCopy);
+    document.addEventListener('cut', onCopy);
+    document.addEventListener('paste', onPaste);
     // while a formula or text is being edited the editors stop the key events: the global shortcuts are
     // handled before them (capture phase); the edit is committed first (blur commits after ~120 ms)
     const onKeyCapture = (e: KeyboardEvent) => {
@@ -170,7 +199,7 @@ export function App() {
     window.addEventListener('mouseup', onMouseUp);
     const beforeUnload = (e: BeforeUnloadEvent) => { if (store.get().dirty && store.get().fileName) e.preventDefault(); };
     window.addEventListener('beforeunload', beforeUnload);
-    return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('keydown', onKeyCapture, true); window.removeEventListener('mouseup', onMouseUp); window.removeEventListener('beforeunload', beforeUnload); };
+    return () => { document.removeEventListener('copy', onCopy); document.removeEventListener('cut', onCopy); document.removeEventListener('paste', onPaste); window.removeEventListener('keydown', onKey); window.removeEventListener('keydown', onKeyCapture, true); window.removeEventListener('mouseup', onMouseUp); window.removeEventListener('beforeunload', beforeUnload); };
   }, []);
 
   /* ---------------------------- drag & drop ----------------------------- */
