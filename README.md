@@ -80,6 +80,7 @@ Messung (`npx tsx scripts/bench.mts`, Node 22):
 - **Vektoren & Matrizen**: `[1, 2; 3, 4]`, Elemente `v[i]`, `A[i, j]` (ORIGIN 0, einstellbar), Spalten `A<<j>>`, `A^T`, `A^-1`, Kreuzprodukt `×`, Vektorisierung `vec( )`, Mehrfachzuweisung `[a; b] := v`, verschachtelte Felder.
 - **Bereichsvariablen**: `i := 0..10`, `x := 0, 0.1 .. 2`, implizite Iteration (`v[i] := i^2`, `i^2 =`).
 - **Analysis**: `sum(f, i, a, b)`, `prod(…)`, `int(f, x, a, b)` (adaptive Gauß-Kronrod, auch ±∞ und mit Einheiten), `deriv(f, x [, n])`, `root(f, x)` / `root(f, x, a, b)`, `polyroots(v)`.
+- **Symbolik** `→` (Taste `Strg+.` oder `->`): `x^2 + 2*x*x →` ergibt `3·x²`; definierte Zahlen, Größen (in SI) und Funktionen werden eingesetzt, unbekannte Namen bleiben symbolisch, `deriv(…, x)` wird symbolisch abgeleitet. Schlüsselwörter: `→ expand` (ausmultiplizieren), `→ float, 6` (Gleitkomma mit 6 Stellen), `→ solve, x` (lineare und quadratische Gleichungen, z. B. `a*x + b == 0 → solve, x` ergibt `−b/a`). Matrizen, Integrale und Summen werden symbolisch nicht ausgewertet (Meldung am Bereich).
 - **Gleichungssysteme**: Solve-Blöcke `Given` … Bedingungen mit `==`, `<`, `>` … `Find(x, y)` / `Minerr` – auch als Funktion `f(a, b) := Find(x)`.
 - **Programme** (mehrzeilig, eingerückt): `if / else if / else`, `for i ∈ …`, `while`, `break`, `continue`, `return`, `try / on error`, lokale Zuweisung `←`.
 - **Funktionsbibliothek** (> 200 Funktionen): Trigonometrie/Hyperbolik, `ln`, `log`, `exp`, Rundung (`round`, `Ceil`, `Floor`, `mod` …), Statistik (`mean`, `median`, `stdev`, `Stdev`, `var`, `percentile`, `corr`, `slope` …), Verteilungen (`dnorm/pnorm/qnorm/rnorm`, ebenso `t`, `chisq`, `F`, `beta`, `gamma`, `binom`, `pois`, `unif`, `exp`, `lnorm`, `weibull` …), Lineare Algebra (`lsolve`, `eigenvals`, `eigenvecs`, `rank`, `rref`, `geninv`, `cond2` …), Matrixaufbau (`augment`, `stack`, `submatrix`, `identity`, `diag`, `sort`, `csort` …), Interpolation `linterp`, Suche (`match`, `lookup`, `vlookup`), Zeichenketten.
@@ -104,7 +105,7 @@ Messung (`npx tsx scripts/bench.mts`, Node 22):
 
 Nach dem Import erscheint ein **Importbericht**: FormelWerk rechnet das Dokument komplett neu und **vergleicht jedes in der Datei gespeicherte Mathcad-Ergebnis mit der eigenen Berechnung**. Übereinstimmende Bereiche tragen ein ✓, Abweichungen ein ! mit beiden Werten im Tooltip; die Statusleiste zeigt die Quote (z. B. „Mathcad-Abgleich 87/87 ✓“). Überlappungen durch andere Schriftbreiten werden automatisch entzerrt, ohne die Rechenreihenfolge zu ändern.
 
-Nicht übernommen werden können: symbolische Auswertungen (das von Mathcad gespeicherte symbolische Ergebnis wird angezeigt), Funktionen aus externen DLLs/Add-ins (z. B. REFPROP), Verweise auf andere Arbeitsblätter, OLE-Objekte (als Bild, falls vorhanden) sowie einige Spezialfunktionen (z. B. `Spline2`, `interp`/`cspline`). Solche Bereiche werden markiert übernommen und im Bericht aufgeführt.
+Nicht übernommen werden können: symbolische Auswertungen aus Mathcad-Dateien (das von Mathcad gespeicherte symbolische Ergebnis wird angezeigt; neu eingegebene `→`-Formeln rechnet FormelWerk selbst), Funktionen aus externen DLLs/Add-ins (z. B. REFPROP), Verweise auf andere Arbeitsblätter, OLE-Objekte (als Bild, falls vorhanden). Solche Bereiche werden markiert übernommen und im Bericht aufgeführt.
 
 ## Verifikation
 
@@ -117,7 +118,7 @@ Die Ergebnisse wurden auf mehreren Ebenen geprüft:
    - Zusätzlich lokal geprüft: 9 reale Mathcad-14/15-Arbeitsblätter aus öffentlichen GitHub-Projekten – **37 von 40** Ergebnissen identisch (die 3 übrigen rufen eine externe REFPROP-DLL auf). Eigene Dateien lassen sich genauso prüfen: `MATHCAD_SAMPLES=/pfad/zu/dateien npm run verify:mathcad`.
 3. **Inkrementelle Berechnung** (`tests/incremental.test.ts`): Auf sieben Arbeitsblättern werden je 17 Änderungsarten (Bearbeiten, Löschen, Verschieben, Format) inkrementell und vollständig berechnet – die Ergebnisse müssen exakt übereinstimmen; ebenso nach einer unterbrochenen Berechnung.
 4. **Fehlersuche durch 10 unabhängige Test-Agenten** (Parser/Format, Einheiten, Matrizen, Solver/Programme, Numerik gegen scipy/mpmath, inkrementelle Berechnung/Performance, Import, Bedienung, Menüs/Dateien, Sicherheit): jeder bestätigte Fund wurde behoben und ist in `tests/engine.test.ts` bzw. `tests/import.verify.test.ts` („Befunde der Testagenten …“) als Regressionstest abgesichert.
-5. **End-to-End-Test im Browser** (`e2e/run.mjs`, Playwright/Chromium): Eingabe per Tastatur inkl. `:`→`:=`, Ergebnisse und Einheiten, Fehlermeldungen, Rückgängig/Wiederholen, Autovervollständigung, griechische Buchstaben, mehrzeilige Programme, Diagramme, Speichern/Öffnen, Import von `.xmcd`/`.mcdx` mit Ergebnisabgleich, Dunkelmodus, Befehlspalette, Kontextmenü, manuelle Berechnung mit F9, Probleme-Liste, Gliederung, Reaktionszeit auf großen Blättern, Hinweis bei `.mcd`, keine JavaScript-Fehler.
+5. **End-to-End-Test im Browser** (`e2e/run.mjs`, Playwright/Chromium): Eingabe per Tastatur inkl. `:`→`:=`, Ergebnisse und Einheiten, Fehlermeldungen, Rückgängig/Wiederholen, Autovervollständigung, griechische Buchstaben, mehrzeilige Programme, Diagramme, Einheitenwahl per Klick, Diagramm und Gleichung lösen per Kontextmenü, symbolische Auswertung, Speichern/Öffnen, Import von `.xmcd`/`.mcdx` mit Ergebnisabgleich, Dunkelmodus, Befehlspalette, Kontextmenü, manuelle Berechnung mit F9, Probleme-Liste, Gliederung, Reaktionszeit auf großen Blättern, Hinweis bei `.mcd`, keine JavaScript-Fehler.
 
 ```bash
 npm test                         # Unit- und Import-Verifikation
@@ -137,6 +138,7 @@ src/engine/   Rechenkern (unabhängig von der Oberfläche)
   worksheet.ts   Rechenreihenfolge, inkrementelle/unterbrechbare Berechnung, Bereichsvariablen, Diagrammdaten
   format.ts      Zahlen- und Einheitenformatierung
   latex.ts       Syntaxbaum → LaTeX (Darstellung mit KaTeX)
+  symbolic.ts    symbolische Auswertung → (Einsetzen, Vereinfachen, Ableiten, expand/float/solve)
   verify.ts      Vergleich mit gespeicherten Mathcad-Ergebnissen
 src/import/   Mathcad-Import (math30/math50-XML → Syntaxbaum → Text)
 src/ui/       React-Oberfläche; Berechnung läuft in einem Web Worker

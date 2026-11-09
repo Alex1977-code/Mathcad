@@ -54,7 +54,8 @@ export interface DefTarget {
 
 export type MathStmt =
   | { kind: 'define'; target: DefTarget; global: boolean; expr: Node; show?: { unit?: Node } }
-  | { kind: 'eval'; expr: Node; unit?: Node }
+  /** sym: symbolic evaluation "→" with an optional keyword (simplify, expand, float, solve). */
+  | { kind: 'eval'; expr: Node; unit?: Node; sym?: { kw?: { name: string; args: Node[] } } }
   | { kind: 'expr'; expr: Node }
   | { kind: 'empty' };
 

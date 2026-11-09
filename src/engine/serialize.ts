@@ -137,7 +137,9 @@ export function stmtToText(s: MathStmt): string {
   switch (s.kind) {
     case 'empty': return '';
     case 'expr': return toText(s.expr);
-    case 'eval': return `${toText(s.expr)} =${s.unit ? ' ' + toText(s.unit) : ''}`;
+    case 'eval':
+      if (s.sym) return `${toText(s.expr)} →${s.sym.kw ? ' ' + s.sym.kw.name + (s.sym.kw.args.length ? ', ' + s.sym.kw.args.map(toText).join(', ') : '') : ''}`;
+      return `${toText(s.expr)} =${s.unit ? ' ' + toText(s.unit) : ''}`;
     case 'define': {
       const op = s.global ? ' ≡ ' : ' := ';
       if (s.expr.k === 'program') return targetToText(s.target) + op.trimEnd() + toText(s.expr);

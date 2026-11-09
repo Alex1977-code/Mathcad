@@ -207,6 +207,14 @@ export function Ribbon() {
                 <Sym l="\text{root}" title="Nullstelle  root(f(x), x)" snippet="root(?, x)" />
               </SymGrid>
             </Group>
+            <Group label="Symbolik">
+              <SymGrid>
+                <Sym l="\rightarrow" title="Symbolisch auswerten (Strg+.)  x^2 + 2*x*x →" snippet=" → " />
+                <Sym l="\xrightarrow{\textsf{expand}}" title="Ausmultiplizieren  (x+1)^2 → expand" snippet=" → expand" />
+                <Sym l="\xrightarrow{\textsf{solve}}" title="Symbolisch lösen  a*x + b == 0 → solve, x" snippet=" → solve, x" />
+                <Sym l="\xrightarrow{\textsf{float}}" title="Gleitkomma mit n Stellen  π → float, 6" snippet=" → float, 6" />
+              </SymGrid>
+            </Group>
             <Group label="Vergleich & Logik">
               <SymGrid>
                 <Sym l="\mathbf{=}" title="Gleich (Bedingung)" snippet=" == " />

@@ -2,7 +2,8 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { MathRegion } from '../../engine/model';
 import type { RegionResult, VariableInfo } from '../../engine/worksheet';
 import { parseMathRegion, ParseError } from '../../engine/parser';
-import { stmtLatex, nameLatex } from '../../engine/latex';
+import { stmtLatex, nameLatex, toLatex } from '../../engine/latex';
+import type { Node } from '../../engine/ast';
 import { isUnitName, COMMON_UNITS } from '../../engine/units';
 import { BUILTIN_NAMES, isBuiltinFunction } from '../../engine/builtins';
 import { renderLatex } from '../katex';
@@ -26,11 +27,13 @@ export function composeLatex(src: string, res: RegionResult | undefined, preferL
   let parseError: ParseError | undefined;
   let kind = res?.kind;
   let show = false;
+  let sym: { kw?: { name: string; args: Node[] } } | undefined;
   try {
     const st = parseMathRegion(src);
     if (!base) base = stmtLatex(st, localCtx);
     kind = st.kind;
-    show = st.kind === 'eval' || (st.kind === 'define' && !!st.show);
+    sym = st.kind === 'eval' ? st.sym : undefined;
+    show = (st.kind === 'eval' && !sym) || (st.kind === 'define' && !!st.show);
   } catch (e) {
     if (e instanceof ParseError) parseError = e;
     return { latex: base ?? '', parseError };
@@ -40,7 +43,11 @@ export function composeLatex(src: string, res: RegionResult | undefined, preferL
     if (res?.resultLatex && !res.error) latex += ` = \\htmlClass{fw-result}{${res.resultLatex}}`;
     else latex += ' = \\htmlClass{fw-result}{\\,\\cdot\\,}';
   }
-  if (res?.symbolicLatex) latex += ` \\rightarrow ${res.symbolicLatex}`;
+  if (sym) {
+    // Mathcad: keyword above the arrow
+    const arrow = sym.kw ? `\\xrightarrow{\\textsf{${sym.kw.name}}${sym.kw.args.map(a => ',\\,' + toLatex(a, localCtx)).join('')}}` : '\\rightarrow';
+    latex += ` ${arrow} ` + (res?.symbolicLatex && !res.error ? `\\htmlClass{fw-sym}{${res.symbolicLatex}}` : '\\htmlClass{fw-sym}{\\,\\cdot\\,}');
+  } else if (res?.symbolicLatex) latex += ` \\rightarrow ${res.symbolicLatex}`;
   // optional: value of a plain definition, greyed (the region itself stays a pure definition)
   if (defValue && !show && kind === 'define' && res?.valueLatex && !res.literal && !res.error && res.valueLatex.length < 600) {
     latex += ` \\htmlClass{fw-defval}{\\;=\\;${res.valueLatex}}`;
@@ -255,6 +262,14 @@ function MathEditor({ region, result, variables, onCommit }: Omit<Props, 'editin
       return;
     }
     if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'm') { e.preventDefault(); insertMatrix(3, 3); return; }
+    // symbolic evaluation: Ctrl+. (Mathcad) or "->"
+    if (((e.ctrlKey || e.metaKey) && e.key === '.') || (e.key === '>' && v[s - 1] === '-' && s === end && !inString)) {
+      e.preventDefault();
+      const from = e.key === '>' ? s - 1 : s;
+      const ins = (v[from - 1] === ' ' ? '' : ' ') + '→ ';
+      setSrc(v.slice(0, from) + ins + v.slice(end), from + ins.length);
+      return;
+    }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'g' && s === end && s > 0) {
       e.preventDefault();
       const g = toGreek(v[s - 1]);

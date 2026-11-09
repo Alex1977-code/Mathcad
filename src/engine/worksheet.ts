@@ -13,6 +13,8 @@ import { escapeText, formatValue, formatReal, type FormatOptions, siUnitFactors,
 import { stmtLatex, toLatex, type LatexCtx } from './latex';
 import { sortRegions, type MathRegion, type PlotRegion, type Region, type Worksheet } from './model';
 import { checkResult, expectedToText, type CheckStatus } from './verify';
+import { symbolicEval } from './symbolic';
+import { toText } from './serialize';
 
 export interface RegionError { message: string; culprit?: string; pos?: number; end?: number; kind: 'parse' | 'calc' }
 
@@ -282,6 +284,12 @@ export class WorksheetEngine {
         case 'empty': break;
         case 'expr': break;
         case 'eval': {
+          if (p.sym) {
+            const node = symbolicEval(p.expr, p.sym.kw, scope);
+            res.symbolicLatex = toLatex(node, this.latexCtx(scope));
+            res.resultText = toText(node);
+            break;
+          }
           const v = this.evalWithRanges(p.expr, scope);
           this.formatResult(res, v, p.unit, scope);
           break;
@@ -395,7 +403,7 @@ export class WorksheetEngine {
     if (eigen && p.kind === 'define') for (const n of definedNames(p)) this.eigenVars.add(n);
     const random = usesRandom(p) || refsAny(p, this.randomVars);
     if (random && p.kind === 'define') for (const n of definedNames(p)) this.randomVars.add(n);
-    const shows = (p.kind === 'eval' || (p.kind === 'define' && !!p.show)) && !random;
+    const shows = ((p.kind === 'eval' && !p.sym) || (p.kind === 'define' && !!p.show)) && !random;
     if (exp && shows) {
       const val = this.lastValue;
       const withUnit = (p.kind === 'eval' && !!p.unit) || (p.kind === 'define' && !!p.show?.unit);

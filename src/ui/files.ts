@@ -1,5 +1,6 @@
 import { normalizeWorksheet, type Worksheet } from '../engine/model';
-import { loadWorksheetFile, ACCEPTED_EXTENSIONS } from '../import';
+// the Mathcad importers (with JSZip) are loaded only when a file is opened
+const ACCEPTED_EXTENSIONS = '.fwk,.json,.xmcd,.mcdx,.mcd';
 import { regionElements } from './layout';
 
 type FileHandle = { name: string; createWritable(): Promise<{ write(d: Blob): Promise<void>; close(): Promise<void> }> };
@@ -18,6 +19,7 @@ export function pickFile(accept = ACCEPTED_EXTENSIONS): Promise<File | null> {
 
 export async function readWorksheet(file: File): Promise<Worksheet> {
   const buf = await file.arrayBuffer();
+  const { loadWorksheetFile } = await import('../import');
   const ws = await loadWorksheetFile(file.name, buf);
   // a document opened this way has no file handle: Ctrl+S must ask for a file name (never overwrite another file)
   currentHandle = null;

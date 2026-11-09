@@ -254,6 +254,14 @@ try {
   await idle();
   ok(/4\.5/.test(await lastRegionText()) && (await page.locator('.region.error').count()) === 0, 'Kontextmenü: Gleichung a·y + 1 = 10 gelöst, Startwert mit passender Einheit (y = 4.5 1/m)');
   await shot('13-diagramm-loesen.png');
+  // symbolic evaluation: "->" becomes →, keywords after the arrow
+  await page.mouse.click(700, 260);
+  for (const t of ['x^2+2*x*x->', '(x+1)^2-> expand', 'p*z+q==0-> solve, z']) { await page.keyboard.type(t); await page.keyboard.press('Enter'); }
+  await idle();
+  const symTexts = await page.locator('.region.math-region').evaluateAll(els => els.slice(-3).map(e => e.innerText.replace(/\s+/g, '')));
+  ok(/3[·⋅]?x2$/.test(symTexts[0]) && /x2\+2[·⋅]?x\+1$/.test(symTexts[1]) && /−?−pq|−qp/.test(symTexts[2]) && (await page.locator('.region.error').count()) === 0,
+    `Symbolisch: x²+2x·x → 3x², (x+1)² → expand, p·z+q=0 → solve (${JSON.stringify(symTexts)})`);
+  await shot('14-symbolisch.png');
 
   /* 13 · responsiveness on a large imported sheet: an edit at the end is recalculated incrementally */
   {

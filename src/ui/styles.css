@@ -324,6 +324,7 @@ button { cursor: pointer; }
 .math-view .fw-result { cursor: pointer; border-radius: 3px; }
 .math-view .fw-result:hover { background: var(--accent-soft); box-shadow: 0 1px 0 var(--result); }
 .math-view .fw-defval { color: var(--text-faint); }
+.math-view .fw-sym, .math-editor .preview .fw-sym { color: var(--result); }
 @media print { .math-view .fw-defval { display: none; } }
 .fw-err-id { color: var(--danger); text-decoration: underline wavy var(--danger); text-decoration-thickness: 1px; }
 .math-placeholder { color: var(--text-faint); font-style: italic; }

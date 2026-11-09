@@ -564,6 +564,15 @@ function parseMathRegionInner(text: string): MathStmt {
   if (eqIdx >= 0) {
     const expr = parseExpression(head.slice(0, toks[eqIdx].pos), true);
     const unitSrc = head.slice(toks[eqIdx].end);
+    if (toks[eqIdx].v === '→') {
+      // symbolic:  expr →   or   expr → expand   or   expr → solve, x
+      const m = /^\s*([\p{L}]+)\s*(?:,(.*))?$/u.exec(unitSrc);
+      if (!unitSrc.trim()) return { kind: 'eval', expr, sym: {} };
+      if (!m) throw new ParseError('Nach „→“ folgt ein Schlüsselwort: simplify, expand, float, n oder solve, x', toks[eqIdx].end);
+      const argOff = toks[eqIdx].end + unitSrc.indexOf(',') + 1;
+      const args = m[2] !== undefined ? at(argOff, () => parseExpression(m[2], false)) : undefined;
+      return { kind: 'eval', expr, sym: { kw: { name: m[1], args: args ? (args.k === 'matrix' ? args.rows.flat() : [args]) : [] } } };
+    }
     const unit = unitSrc.trim() ? at(toks[eqIdx].end, () => parseUnit(unitSrc)) : undefined;
     return { kind: 'eval', expr, unit };
   }
