@@ -5,27 +5,83 @@ import { nameLatex } from '../engine/latex';
 import { renderLatex } from './katex';
 import { store, useStore } from './store';
 import { PLOT_COLORS } from './regions/PlotRegionView';
-import { IconClose, IconPlus, IconTrash } from './icons';
+import { IconCheck, IconClose, IconPlus, IconTrash } from './icons';
+import { sortRegions } from '../engine/model';
 
-export type SideTab = 'vars' | 'format' | 'help';
+export type SideTab = 'vars' | 'problems' | 'outline' | 'format' | 'help';
 
-export function SidePanel({ result, tab, setTab }: { result: ComputeResult | null; tab: SideTab; setTab: (t: SideTab) => void }) {
+export function SidePanel({ result }: { result: ComputeResult | null }) {
   const plotEditor = useStore(s => s.plotEditor);
+  const tab = useStore(s => s.sideTab);
   const plot = useStore(s => s.ws.regions.find(r => r.id === s.plotEditor && r.type === 'plot') as PlotRegion | undefined);
   if (plotEditor && plot) return <aside className="side"><PlotEditor region={plot} result={result} /></aside>;
+  const problems = result ? Object.values(result.results).filter(r => r.error || r.plot?.error || r.check?.status === 'mismatch').length : 0;
+  const setTab = (t: SideTab) => store.set({ sideTab: t });
   return (
     <aside className="side">
       <div className="side-tabs" role="tablist">
-        <button role="tab" className={tab === 'vars' ? 'on' : ''} onClick={() => setTab('vars')}>Variablen</button>
-        <button role="tab" className={tab === 'format' ? 'on' : ''} onClick={() => setTab('format')}>Format</button>
-        <button role="tab" className={tab === 'help' ? 'on' : ''} onClick={() => setTab('help')}>Kurzreferenz</button>
+        <button role="tab" aria-selected={tab === 'vars'} className={tab === 'vars' ? 'on' : ''} onClick={() => setTab('vars')}>Variablen</button>
+        <button role="tab" aria-selected={tab === 'problems'} className={tab === 'problems' ? 'on' : ''} onClick={() => setTab('problems')}>
+          Probleme{problems > 0 && <span className="count">{problems}</span>}
+        </button>
+        <button role="tab" aria-selected={tab === 'outline'} className={tab === 'outline' ? 'on' : ''} onClick={() => setTab('outline')}>Gliederung</button>
+        <button role="tab" aria-selected={tab === 'help' || tab === 'format'} className={tab === 'help' || tab === 'format' ? 'on' : ''} onClick={() => setTab('help')}>Hilfe</button>
+        <span className="spacer" />
+        <button className="side-close" title="Seitenleiste schließen" onClick={() => store.set({ sideOpen: false })}><IconClose /></button>
       </div>
       <div className="side-body">
         {tab === 'vars' && <Variables result={result} />}
-        {tab === 'format' && <FormatSettings />}
-        {tab === 'help' && <Help />}
+        {tab === 'problems' && <Problems result={result} />}
+        {tab === 'outline' && <Outline />}
+        {(tab === 'help' || tab === 'format') && <Help />}
       </div>
     </aside>
+  );
+}
+
+const jump = (id: string) => store.set({ selection: [id], focusRegion: { id, n: Date.now() } });
+
+function Problems({ result }: { result: ComputeResult | null }) {
+  const regions = useStore(s => s.ws.regions);
+  if (!result) return <div className="empty-hint">Wird berechnet …</div>;
+  const order = sortRegions(regions);
+  const items = order.map(r => ({ r, res: result.results[r.id] })).filter(({ res }) => res && (res.error || res.plot?.error || res.check?.status === 'mismatch'));
+  if (!items.length) return <div className="ok-hint"><IconCheck />Keine Fehler{result.verification ? ` – alle ${result.verification.total} Mathcad-Ergebnisse stimmen überein` : ''}.</div>;
+  return (
+    <div className="problems">
+      {items.map(({ r, res }) => {
+        const src = r.type === 'math' ? r.src.split('\n')[0] : r.type === 'plot' ? 'Diagramm' : r.type;
+        const isErr = !!(res!.error || res!.plot?.error);
+        return (
+          <button key={r.id} className={`problem ${isErr ? 'err' : 'warn'}`} onClick={() => jump(r.id)} title="Zum Bereich springen">
+            <span className="pico">{isErr ? '✕' : '!'}</span>
+            <span className="ptext">
+              <code>{src}</code>
+              <span>{res!.error?.message ?? res!.plot?.error ?? `Mathcad: ${res!.check!.expected} · FormelWerk: ${res!.resultText ?? '–'}`}</span>
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function Outline() {
+  const regions = useStore(s => s.ws.regions);
+  const items: { id: string; level: number; text: string }[] = [];
+  for (const r of sortRegions(regions)) {
+    if (r.type !== 'text') continue;
+    const doc = new DOMParser().parseFromString(r.html, 'text/html');
+    doc.querySelectorAll('h1, h2, h3').forEach(h => {
+      const text = (h.textContent ?? '').trim();
+      if (text) items.push({ id: r.id, level: h.tagName === 'H3' ? 2 : 1, text });
+    });
+  }
+  if (!items.length) return <div className="empty-hint">Keine Überschriften. Überschriften in Textbereichen (Schaltfläche „H“ beim Bearbeiten) erscheinen hier als Inhaltsverzeichnis.</div>;
+  return (
+    <div className="outline">
+      {items.map((it, i) => <button key={i} className={`lvl${it.level}`} onClick={() => jump(it.id)}>{it.text}</button>)}
+    </div>
   );
 }
 
@@ -44,47 +100,6 @@ function Variables({ result }: { result: ComputeResult | null }) {
           <span className="var-val" title={v.text}>{v.text}</span>
         </div>
       ))}
-    </>
-  );
-}
-
-function FormatSettings() {
-  const settings = useStore(s => s.ws.settings);
-  const showChecks = useStore(s => s.showChecks);
-  const hasImport = useStore(s => !!s.ws.source);
-  return (
-    <>
-      <div className="panel-title">Ergebnisformat</div>
-      <div className="field">
-        <label htmlFor="dec">Nachkommastellen</label>
-        <input id="dec" type="number" min={0} max={12} value={settings.decimals}
-          onChange={(e) => store.setSettings({ decimals: Math.max(0, Math.min(12, parseInt(e.target.value || '0', 10))) })} />
-      </div>
-      <div className="field">
-        <label htmlFor="exp">Exponentialdarstellung ab 10^n</label>
-        <input id="exp" type="number" min={1} max={15} value={settings.expThreshold}
-          onChange={(e) => store.setSettings({ expThreshold: Math.max(1, Math.min(15, parseInt(e.target.value || '7', 10))) })} />
-      </div>
-      <div className="field">
-        <label htmlFor="origin">Startindex von Vektoren (ORIGIN)</label>
-        <select id="origin" value={settings.origin} onChange={(e) => store.setSettings({ origin: parseInt(e.target.value, 10) })}>
-          <option value={0}>0 (Mathcad-Standard)</option>
-          <option value={1}>1</option>
-        </select>
-      </div>
-      <div className="panel-title" style={{ marginTop: 18 }}>Darstellung</div>
-      <div className="field">
-        <label htmlFor="fs">Schriftgröße der Formeln: {settings.fontSize ?? 15} px</label>
-        <input id="fs" type="range" min={10} max={22} step={0.5} value={settings.fontSize ?? 15}
-          onChange={(e) => store.setSettings({ fontSize: parseFloat(e.target.value) })} />
-      </div>
-      {hasImport && (
-        <label className="check">
-          <input type="checkbox" checked={showChecks} onChange={(e) => store.set({ showChecks: e.target.checked })} />
-          Abgleich mit Mathcad-Ergebnissen anzeigen
-        </label>
-      )}
-      <p className="empty-hint">Eine Anzeigeeinheit pro Ergebnis wählen Sie direkt in der Formel: <code>M = kN*m</code></p>
     </>
   );
 }

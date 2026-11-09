@@ -1,16 +1,18 @@
-import { useEffect, useRef, useState } from 'react';
-import { emptyWorksheet, type MathRegion, type Region, type Worksheet } from '../engine/model';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { emptyWorksheet, sortRegions, type MathRegion } from '../engine/model';
 import { useCompute } from './compute';
 import { store, useStore } from './store';
 import { Sheet } from './Sheet';
-import { Ribbon, separateAll } from './Ribbon';
-import { SidePanel, type SideTab } from './SidePanel';
+import { Ribbon } from './Ribbon';
+import { SidePanel } from './SidePanel';
+import { ContextMenu, CommandPalette } from './Overlays';
 import { autosave, exportHtml, loadAutosave, pickFile, readWorksheet, resetFileHandle, saveWorksheet } from './files';
 import { exampleWorksheet } from './examples';
-import { regionElements } from './layout';
 import {
-  IconExample, IconExport, IconHelp, IconImport, IconMoon, IconNew, IconOpen, IconPanel, IconPrint, IconRedo, IconSave, IconSun, IconUndo,
-} from './icons';
+  copySelection, duplicateSelection, paste, recalcNow, selectAll, separateAll, setAppHandlers, setZoom, showSide, toggleAutoCalc,
+  toggleSide, zoomBy,
+} from './actions';
+import { IconImport, IconMoon, IconPanel, IconRedo, IconSave, IconSun, IconUndo } from './icons';
 
 type Theme = 'light' | 'dark';
 
@@ -31,18 +33,21 @@ interface Toast { text: string; err?: boolean; id: number }
 export function App() {
   const ws = useStore(s => s.ws);
   const dirty = useStore(s => s.dirty);
+  const fileName = useStore(s => s.fileName);
   const zoom = useStore(s => s.zoom);
   const plotEditor = useStore(s => s.plotEditor);
-  const { result, busy, error } = useCompute(ws);
+  const sideOpen = useStore(s => s.sideOpen);
+  const autoCalc = useStore(s => s.autoCalc);
+  const recalcTick = useStore(s => s.recalcTick);
+  const { result, busy, error, progress, recalc, computedWs } = useCompute(ws, 60, autoCalc);
   const [theme, toggleTheme] = useTheme();
-  const [sideOpen, setSideOpen] = useState(() => window.innerWidth > 900);
-  const [sideTab, setSideTab] = useState<SideTab>('vars');
-  const [fileMenu, setFileMenu] = useState(false);
   const [report, setReport] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const pendingSeparate = useRef(false);
-  const fileMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => { if (recalcTick) recalc(); }, [recalcTick]);
+  const stale = !autoCalc && !!computedWs && computedWs !== ws;
 
   const notify = (text: string, err = false) => {
     const id = Date.now();
@@ -75,107 +80,62 @@ export function App() {
     requestAnimationFrame(() => requestAnimationFrame(() => separateAll(false)));
   }, [result]);
 
-  useEffect(() => {
-    if (!fileMenu) return;
-    const h = (e: MouseEvent) => { if (!fileMenuRef.current?.contains(e.target as Node)) setFileMenu(false); };
-    window.addEventListener('mousedown', h);
-    return () => window.removeEventListener('mousedown', h);
-  }, [fileMenu]);
-
   /* ------------------------------ file ops ----------------------------- */
   const confirmDiscard = () => !store.get().dirty || store.get().ws.regions.length === 0 || window.confirm('Ungespeicherte Änderungen verwerfen?');
 
   const openFile = async (file?: File | null) => {
-    setFileMenu(false);
     const f = file ?? await pickFile();
     if (!f) return;
     if (!confirmDiscard()) return;
     try {
       const doc = await readWorksheet(f);
       store.load(doc, f.name);
-      if (doc.source) {
-        pendingSeparate.current = true;
-        setReport(true);
-      } else notify(`„${f.name}“ geöffnet`);
+      if (doc.source) { pendingSeparate.current = true; setReport(true); }
+      else notify(`„${f.name}“ geöffnet`);
     } catch (e) {
       notify((e as Error).message, true);
     }
   };
-
   const save = async (as = false) => {
-    setFileMenu(false);
-    const s = store.get();
-    const toSave: Worksheet = s.ws.source ? { ...s.ws } : s.ws;
-    const name = await saveWorksheet(toSave, as);
+    const name = await saveWorksheet(store.get().ws, as);
     if (name) { store.set({ dirty: false, fileName: name }); notify(`Gespeichert: ${name}`); }
   };
+  const newDoc = () => { if (!confirmDiscard()) return; resetFileHandle(); store.load(emptyWorksheet(), null); };
+  const openExample = () => { if (!confirmDiscard()) return; store.load(exampleWorksheet(), null); };
 
-  const newDoc = () => {
-    setFileMenu(false);
-    if (!confirmDiscard()) return;
-    resetFileHandle();
-    store.load(emptyWorksheet(), null);
-  };
-
-  const openExample = () => {
-    setFileMenu(false);
-    if (!confirmDiscard()) return;
-    store.load(exampleWorksheet(), null);
-  };
-
-  /* ---------------------------- clipboard ------------------------------ */
-  const clip = useRef<Region[]>([]);
-  const copy = (cut: boolean) => {
-    const s = store.get();
-    const regs = s.ws.regions.filter(r => s.selection.includes(r.id));
-    if (!regs.length) return;
-    clip.current = regs;
-    const text = regs.filter(r => r.type === 'math').map(r => (r as MathRegion).src).join('\n');
-    navigator.clipboard?.writeText(text).catch(() => undefined);
-    if (cut) store.deleteRegions(s.selection);
-  };
-  const paste = () => {
-    const s = store.get();
-    if (!clip.current.length) return;
-    const minX = Math.min(...clip.current.map(r => r.x)), minY = Math.min(...clip.current.map(r => r.y));
-    const cur = s.cursor ?? { x: minX + 24, y: minY + 24 };
-    const copies = store.cloneRegions(clip.current, cur.x - minX, cur.y - minY);
-    store.updateWs(w => ({ ...w, regions: [...w.regions, ...copies] }));
-    store.set({ selection: copies.map(r => r.id) });
-  };
-  const duplicate = () => {
-    const s = store.get();
-    const regs = s.ws.regions.filter(r => s.selection.includes(r.id));
-    if (!regs.length) return;
-    const h = Math.max(...regs.map(r => r.y + (regionElements.get(r.id)?.offsetHeight ?? 24))) - Math.min(...regs.map(r => r.y));
-    const copies = store.cloneRegions(regs, 0, h + 12);
-    store.updateWs(w => ({ ...w, regions: [...w.regions, ...copies] }));
-    store.set({ selection: copies.map(r => r.id) });
-  };
+  setAppHandlers({
+    openFile: () => openFile(), save: (as) => save(as), newDoc, openExample,
+    exportHtml: () => exportHtml(store.get().ws), print: () => setTimeout(() => window.print(), 50),
+    toggleTheme, showReport: () => setReport(true),
+  });
 
   /* ---------------------------- shortcuts ------------------------------ */
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey;
       const s = store.get();
+      const k = e.key.toLowerCase();
       const inField = (e.target as HTMLElement)?.closest?.('input, textarea, [contenteditable="true"], select');
-      if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); save(e.shiftKey); return; }
-      if (mod && e.key.toLowerCase() === 'o') { e.preventDefault(); openFile(); return; }
-      if (mod && e.key.toLowerCase() === 'p') { e.preventDefault(); window.print(); return; }
+      if (mod && k === 's') { e.preventDefault(); save(e.shiftKey); return; }
+      if (mod && k === 'o') { e.preventDefault(); openFile(); return; }
+      if (mod && k === 'p') { e.preventDefault(); window.print(); return; }
+      if (mod && k === 'k') { e.preventDefault(); store.set({ palette: !s.palette }); return; }
+      if (e.key === 'F9') { e.preventDefault(); recalcNow(); return; }
+      if (e.key === 'F1') { e.preventDefault(); showSide('help'); return; }
       if (inField || s.editing) return;
-      if (mod && e.key.toLowerCase() === 'z' && !e.shiftKey) { e.preventDefault(); store.undo(); return; }
-      if (mod && (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey))) { e.preventDefault(); store.redo(); return; }
-      if (mod && e.key.toLowerCase() === 'a') { e.preventDefault(); store.set({ selection: s.ws.regions.map(r => r.id) }); return; }
-      if (mod && e.key.toLowerCase() === 'c') { e.preventDefault(); copy(false); return; }
-      if (mod && e.key.toLowerCase() === 'x') { e.preventDefault(); copy(true); return; }
-      if (mod && e.key.toLowerCase() === 'v') { e.preventDefault(); paste(); return; }
-      if (mod && e.key.toLowerCase() === 'd') { e.preventDefault(); duplicate(); return; }
-      if (mod && (e.key === '+' || e.key === '=')) { e.preventDefault(); store.set({ zoom: Math.min(2, +(s.zoom + 0.1).toFixed(2)) }); return; }
-      if (mod && e.key === '-') { e.preventDefault(); store.set({ zoom: Math.max(0.5, +(s.zoom - 0.1).toFixed(2)) }); return; }
-      if (mod && e.key === '0') { e.preventDefault(); store.set({ zoom: 1 }); return; }
+      if (mod && k === 'z' && !e.shiftKey) { e.preventDefault(); store.undo(); return; }
+      if (mod && (k === 'y' || (k === 'z' && e.shiftKey))) { e.preventDefault(); store.redo(); return; }
+      if (mod && k === 'a') { e.preventDefault(); selectAll(); return; }
+      if (mod && k === 'c') { e.preventDefault(); copySelection(false); return; }
+      if (mod && k === 'x') { e.preventDefault(); copySelection(true); return; }
+      if (mod && k === 'v') { e.preventDefault(); paste(); return; }
+      if (mod && k === 'd') { e.preventDefault(); duplicateSelection(); return; }
+      if (mod && (e.key === '+' || e.key === '=')) { e.preventDefault(); zoomBy(0.1); return; }
+      if (mod && e.key === '-') { e.preventDefault(); zoomBy(-0.1); return; }
+      if (mod && e.key === '0') { e.preventDefault(); setZoom(1); return; }
     };
     window.addEventListener('keydown', onKey);
-    const beforeUnload = (e: BeforeUnloadEvent) => { if (store.get().dirty && store.get().fileName) { e.preventDefault(); } };
+    const beforeUnload = (e: BeforeUnloadEvent) => { if (store.get().dirty && store.get().fileName) e.preventDefault(); };
     window.addEventListener('beforeunload', beforeUnload);
     return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('beforeunload', beforeUnload); };
   }, []);
@@ -188,63 +148,59 @@ export function App() {
     if (f) openFile(f);
   };
 
+  /* ---------------------------- status ---------------------------------- */
+  const order = useMemo(() => sortRegions(ws.regions), [ws.regions]);
+  const pending = useMemo(() => {
+    if (!busy || !progress) return undefined;
+    return new Set(order.slice(progress.done).map(r => r.id));
+  }, [busy, progress, order]);
   const errorCount = result?.errorCount ?? 0;
+  const mismatches = result?.verification?.mismatch ?? 0;
   const ver = result?.verification;
-  const jumpToFirstError = () => {
-    if (!result) return;
-    const ids = Object.values(result.results).filter(r => r.error || r.plot?.error).map(r => r.id);
-    const order = store.get().ws.regions.filter(r => ids.includes(r.id)).sort((a, b) => a.y - b.y);
-    if (order[0]) store.set({ selection: [order[0].id], focusRegion: { id: order[0].id, n: Date.now() } });
-  };
+  const pct = progress && progress.total ? Math.round(100 * progress.done / progress.total) : null;
 
   return (
     <div className="app" onDragOver={(e) => { e.preventDefault(); setDragOver(true); }} onDragLeave={(e) => { if (e.currentTarget === e.target) setDragOver(false); }} onDrop={onDrop}>
       <header className="topbar">
-        <div className="brand"><span className="brand-mark">ƒ</span>FormelWerk <small>Technische Berechnungen</small></div>
-        <div className="sep" />
-        <div className="menu-wrap" ref={fileMenuRef}>
-          <button className="btn ghost" onClick={() => setFileMenu(o => !o)} aria-haspopup="menu">Datei</button>
-          {fileMenu && (
-            <div className="menu" role="menu">
-              <button onClick={newDoc}><IconNew />Neu</button>
-              <button onClick={() => openFile()}><IconOpen />Öffnen …<kbd>Strg+O</kbd></button>
-              <button onClick={() => openFile()}><IconImport />Mathcad-Datei importieren …<span className="hint">.xmcd .mcdx</span></button>
-              <hr />
-              <button onClick={() => save(false)}><IconSave />Speichern<kbd>Strg+S</kbd></button>
-              <button onClick={() => save(true)}><IconSave />Speichern unter …</button>
-              <hr />
-              <button onClick={() => { setFileMenu(false); exportHtml(store.get().ws); }}><IconExport />Als HTML exportieren</button>
-              <button onClick={() => { setFileMenu(false); setTimeout(() => window.print(), 50); }}><IconPrint />Drucken / als PDF<kbd>Strg+P</kbd></button>
-              <hr />
-              <button onClick={openExample}><IconExample />Beispiel öffnen</button>
-            </div>
-          )}
+        <div className="brand" title="FormelWerk – technische Berechnungen"><span className="brand-mark">ƒ</span><span className="brand-name">FormelWerk</span></div>
+        <div className="qa">
+          <button className="btn icon ghost" title="Speichern (Strg+S)" onClick={() => save(false)}><IconSave /></button>
+          <button className="btn icon ghost" title="Rückgängig (Strg+Z)" onClick={() => store.undo()}><IconUndo /></button>
+          <button className="btn icon ghost" title="Wiederholen (Strg+Y)" onClick={() => store.redo()}><IconRedo /></button>
         </div>
-        <input className="title-input" value={ws.title} aria-label="Titel des Arbeitsblatts"
-          onChange={(e) => store.updateWs(w => ({ ...w, title: e.target.value }), false)} />
-        {dirty && <span className="dirty-dot" title="Ungespeicherte Änderungen" />}
+        <div className="doc-title">
+          <input className="title-input" value={ws.title} aria-label="Titel des Arbeitsblatts" spellCheck={false}
+            onChange={(e) => store.updateWs(w => ({ ...w, title: e.target.value }), false)} />
+          <span className={`save-state${dirty ? ' dirty' : ''}`}>{dirty ? 'Nicht gespeichert' : fileName ? 'Gespeichert' : ''}</span>
+        </div>
         <div className="spacer" />
-        <button className="btn icon ghost" title="Rückgängig (Strg+Z)" onClick={() => store.undo()}><IconUndo /></button>
-        <button className="btn icon ghost" title="Wiederholen (Strg+Y)" onClick={() => store.redo()}><IconRedo /></button>
-        <div className="sep" />
-        <button className="btn hide-narrow" onClick={() => openFile()}><IconImport />Importieren</button>
+        <button className="btn hide-narrow" onClick={() => openFile()} title="Öffnen oder Mathcad-Datei importieren (.fwk, .xmcd, .mcdx)"><IconImport />Öffnen / Importieren</button>
         <button className="btn primary" onClick={() => save(false)}><IconSave />Speichern</button>
         <button className="btn icon ghost" title={theme === 'dark' ? 'Helles Design' : 'Dunkles Design'} onClick={toggleTheme}>{theme === 'dark' ? <IconSun /> : <IconMoon />}</button>
-        <button className="btn icon ghost" title="Kurzreferenz" onClick={() => { setSideOpen(true); setSideTab('help'); store.set({ plotEditor: null }); }}><IconHelp /></button>
-        <button className={`btn icon ghost${sideOpen ? ' active' : ''}`} title="Seitenleiste ein/aus" onClick={() => setSideOpen(o => !o)}><IconPanel /></button>
+        <button className={`btn icon ghost${sideOpen ? ' active' : ''}`} title="Seitenleiste ein/aus" onClick={toggleSide}><IconPanel /></button>
       </header>
       <Ribbon />
       <div className="main" style={{ gridTemplateColumns: sideOpen || plotEditor ? '1fr auto' : '1fr' }}>
-        <Sheet result={result} onOpenExample={openExample} onImport={() => openFile()} />
-        {(sideOpen || plotEditor) && <SidePanel result={result} tab={sideTab} setTab={setSideTab} />}
+        <Sheet result={result} onOpenExample={openExample} onImport={() => openFile()} pending={pending} />
+        {(sideOpen || plotEditor) && <SidePanel result={result} />}
       </div>
       <footer className="statusbar">
-        <span className="status-item" aria-live="polite">
-          <span className={`dot ${busy ? 'busy' : error ? 'err' : 'ok'}`} />
-          {busy ? 'Berechne …' : error ? `Fehler: ${error}` : `Berechnet${result ? ` in ${result.millis} ms` : ''}`}
+        <span className="status-item calc-status" aria-live="polite">
+          {busy ? (
+            <><span className="spinner" />Berechne …{pct !== null && <><span className="progress"><i style={{ width: `${pct}%` }} /></span>{pct} %</>}</>
+          ) : stale ? (
+            <><span className="dot warn" />Nicht aktuell – <button className="linkbtn" onClick={recalcNow}>F9 berechnen</button></>
+          ) : error ? (
+            <><span className="dot err" />Fehler: {error}</>
+          ) : (
+            <><span className="dot ok" />Berechnet{result ? ` · ${result.millis} ms` : ''}</>
+          )}
         </span>
-        <button className="status-item" onClick={jumpToFirstError} disabled={!errorCount} title={errorCount ? 'Zum ersten Fehler springen' : ''}>
+        <button className={`status-item calc-mode${autoCalc ? '' : ' off'}`} onClick={toggleAutoCalc} title="Automatische Berechnung ein/aus">{autoCalc ? 'Automatisch' : 'Manuell'}</button>
+        <span className="sep" />
+        <button className="status-item" onClick={() => showSide('problems')} title="Probleme anzeigen">
           <span className={`pill ${errorCount ? 'err' : 'ok'}`}>{errorCount ? `${errorCount} Fehler` : 'Keine Fehler'}</span>
+          {mismatches > 0 && <span className="pill warn">{mismatches} Abweichung{mismatches === 1 ? '' : 'en'}</span>}
         </button>
         {ver && (
           <button className="status-item" onClick={() => setReport(true)} title="Abgleich mit den in der Mathcad-Datei gespeicherten Ergebnissen">
@@ -253,14 +209,17 @@ export function App() {
         )}
         <span className="status-item hide-narrow">{ws.regions.length} Bereiche</span>
         <div className="spacer" />
+        <span className="status-item hide-narrow muted">{ws.settings.decimals} Nachkommastellen · {ws.settings.decimalComma ? 'Komma' : 'Punkt'}</span>
         <span className="zoom">
-          <button className="btn icon ghost" title="Verkleinern" onClick={() => store.set({ zoom: Math.max(0.5, +(zoom - 0.1).toFixed(2)) })}>−</button>
-          <input type="range" min={0.5} max={2} step={0.05} value={zoom} aria-label="Zoom" onChange={(e) => store.set({ zoom: parseFloat(e.target.value) })} />
-          <button className="btn icon ghost" title="Vergrößern" onClick={() => store.set({ zoom: Math.min(2, +(zoom + 0.1).toFixed(2)) })}>+</button>
-          <span style={{ width: 40, textAlign: 'right' }}>{Math.round(zoom * 100)} %</span>
+          <button className="btn icon ghost" title="Verkleinern" onClick={() => zoomBy(-0.1)}>−</button>
+          <input type="range" min={0.5} max={2} step={0.05} value={zoom} aria-label="Zoom" onChange={(e) => setZoom(parseFloat(e.target.value))} />
+          <button className="btn icon ghost" title="Vergrößern" onClick={() => zoomBy(0.1)}>+</button>
+          <button className="zoom-val" title="Zoom 100 %" onClick={() => setZoom(1)}>{Math.round(zoom * 100)} %</button>
         </span>
       </footer>
       {report && <ImportReport result={result} busy={busy} onClose={() => setReport(false)} />}
+      <ContextMenu />
+      <CommandPalette />
       {toast && <div className={`toast${toast.err ? ' err' : ''}`} role="status">{toast.text}</div>}
       {dragOver && <div className="drop-overlay">Datei hier ablegen – .fwk, .xmcd oder .mcdx</div>}
     </div>

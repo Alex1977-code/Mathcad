@@ -6,8 +6,9 @@ import { MARGIN, PAGE_H, PAGE_W, regionElements, snap } from './layout';
 import { MathRegionView } from './regions/MathRegionView';
 import { TextRegionView } from './regions/TextRegionView';
 import { PlotRegionView } from './regions/PlotRegionView';
+import { newMathRegion } from './actions';
 
-interface Props { result: ComputeResult | null; onOpenExample: () => void; onImport: () => void }
+interface Props { result: ComputeResult | null; onOpenExample: () => void; onImport: () => void; pending?: Set<string> }
 
 interface DragState {
   kind: 'move' | 'rubber' | 'resize';
@@ -18,11 +19,9 @@ interface DragState {
   shift?: boolean;
 }
 
-export function newMathRegion(x: number, y: number, src = ''): Region {
-  return { id: newId(), type: 'math', x, y, src };
-}
+export { newMathRegion };
 
-export function Sheet({ result, onOpenExample, onImport }: Props) {
+export function Sheet({ result, onOpenExample, onImport, pending }: Props) {
   const ws = useStore(s => s.ws);
   const selection = useStore(s => s.selection);
   const editing = useStore(s => s.editing);
@@ -30,6 +29,7 @@ export function Sheet({ result, onOpenExample, onImport }: Props) {
   const zoom = useStore(s => s.zoom);
   const showChecks = useStore(s => s.showChecks);
   const focusRegion = useStore(s => s.focusRegion);
+  const showGrid = useStore(s => s.showGrid);
   const scroller = useRef<HTMLDivElement>(null);
   const page = useRef<HTMLDivElement>(null);
   const drag = useRef<DragState | null>(null);
@@ -178,7 +178,7 @@ export function Sheet({ result, onOpenExample, onImport }: Props) {
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     const s = store.get();
-    if (s.editing) return;
+    if (s.editing || s.palette || s.contextMenu) return;
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     const cur = s.cursor ?? { x: MARGIN, y: MARGIN };
     if (e.key === 'Delete' || e.key === 'Backspace') {
@@ -228,7 +228,13 @@ export function Sheet({ result, onOpenExample, onImport }: Props) {
         <div style={{ width: PAGE_W * zoom, height: pageHeight * zoom }}>
           <div
             ref={page}
-            className="page"
+            className={`page${showGrid ? '' : ' no-grid'}`}
+            onContextMenu={(e) => {
+              if (e.target !== page.current) return;
+              e.preventDefault();
+              const p = toPage(e);
+              store.set({ selection: [], contextMenu: { x: e.clientX, y: e.clientY, page: { x: snap(p.x), y: snap(p.y) } } });
+            }}
             style={{ width: PAGE_W, height: pageHeight, transform: `scale(${zoom})`, transformOrigin: 'top left', fontSize: fontSize }}
             onMouseDown={onPageMouseDown}
             onDoubleClick={(e) => {
@@ -248,7 +254,7 @@ export function Sheet({ result, onOpenExample, onImport }: Props) {
               const ed = editing === r.id;
               const err = r.type === 'math' && !!res?.error && !ed;
               const cls = ['region', `${r.type}-region`, sel ? 'selected' : '', ed ? 'editing' : '', err ? 'error' : '',
-                r.type === 'math' && r.disabled ? 'disabled-calc' : ''].filter(Boolean).join(' ');
+                r.type === 'math' && r.disabled ? 'disabled-calc' : '', pending?.has(r.id) && !ed ? 'pending' : ''].filter(Boolean).join(' ');
               return (
                 <div
                   key={r.id}
@@ -258,6 +264,13 @@ export function Sheet({ result, onOpenExample, onImport }: Props) {
                   style={{ left: r.x, top: r.y }}
                   onMouseDown={(e) => onRegionMouseDown(e, r)}
                   onDoubleClick={(e) => { e.stopPropagation(); if (r.type === 'plot') store.set({ plotEditor: r.id, selection: [r.id] }); }}
+                  onContextMenu={(e) => {
+                    if (store.get().editing === r.id) return;
+                    e.preventDefault(); e.stopPropagation();
+                    if (store.get().editing) finishEditing();
+                    if (!store.get().selection.includes(r.id)) store.set({ selection: [r.id] });
+                    store.set({ contextMenu: { x: e.clientX, y: e.clientY, regionId: r.id } });
+                  }}
                 >
                   {r.type !== 'pagebreak' && <span className="grip" title="Verschieben" />}
                   {r.type === 'math' && (

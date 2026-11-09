@@ -68,6 +68,8 @@ export interface WorksheetSettings {
   origin: number;
   /** Base font size of formulas in px. */
   fontSize?: number;
+  /** Show results with a decimal comma (input always uses the point). */
+  decimalComma?: boolean;
 }
 
 export interface Worksheet {

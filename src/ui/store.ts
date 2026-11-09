@@ -21,15 +21,33 @@ export interface AppState {
   focusRegion: { id: string; n: number } | null;
   /** Incremented whenever another document is loaded. */
   docId: number;
+  /** Automatic recalculation (Mathcad: Berechnen → Automatisch). */
+  autoCalc: boolean;
+  showGrid: boolean;
+  sideOpen: boolean;
+  sideTab: 'vars' | 'problems' | 'outline' | 'format' | 'help';
+  palette: boolean;
+  contextMenu: { x: number; y: number; regionId?: string; page?: { x: number; y: number } } | null;
+  /** Requests a manual recalculation (incremented). */
+  recalcTick: number;
 }
 
 const HISTORY_LIMIT = 200;
+
+export function readPref<T>(key: string, def: T): T {
+  try { const v = localStorage.getItem('formelwerk.pref.' + key); return v === null ? def : JSON.parse(v) as T; } catch { return def; }
+}
+export function writePref(key: string, v: unknown) {
+  try { localStorage.setItem('formelwerk.pref.' + key, JSON.stringify(v)); } catch { /* ignore */ }
+}
 
 class Store {
   state: AppState = {
     ws: emptyWorksheet(),
     selection: [], editing: null, editOriginal: null, cursor: { x: 48, y: 48 },
     fileName: null, dirty: false, zoom: 1, showChecks: true, plotEditor: null, focusRegion: null, docId: 0,
+    autoCalc: true, showGrid: readPref('grid', true), sideOpen: typeof window === 'undefined' || window.innerWidth > 900,
+    sideTab: 'vars', palette: false, contextMenu: null, recalcTick: 0,
   };
   past: Worksheet[] = [];
   future: Worksheet[] = [];

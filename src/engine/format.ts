@@ -8,6 +8,8 @@ export interface FormatOptions {
   expThreshold: number;
   /** Maximum matrix rows/cols shown. */
   maxMatrix: number;
+  /** Decimal comma instead of point. */
+  decimalComma?: boolean;
 }
 
 export const DEFAULT_FORMAT: FormatOptions = { decimals: 3, expThreshold: 7, maxMatrix: 12 };
@@ -22,6 +24,12 @@ function trimZeros(s: string): string {
 }
 
 export function formatReal(x: number, o: FormatOptions = DEFAULT_FORMAT): Formatted {
+  const f = formatRealDot(x, o);
+  if (!o.decimalComma) return f;
+  return { latex: f.latex.replace(/(\d)\.(\d)/g, '$1{,}$2'), text: f.text.replace(/(\d)\.(\d)/g, '$1,$2') };
+}
+
+function formatRealDot(x: number, o: FormatOptions): Formatted {
   if (Number.isNaN(x)) return { latex: '\\mathrm{NaN}', text: 'NaN' };
   if (!isFinite(x) || Math.abs(x) >= 1e307) return { latex: x < 0 ? '-\\infty' : '\\infty', text: x < 0 ? '-∞' : '∞' };
   if (x === 0 || Math.abs(x) < 1e-15) return { latex: '0', text: '0' };

@@ -9,6 +9,8 @@ export interface ComputeState {
   error?: string;
   /** Progress of the running calculation (regions in evaluation order). */
   progress?: Progress;
+  /** Document state the current result belongs to. */
+  computedWs?: Worksheet;
 }
 
 /**
@@ -20,6 +22,7 @@ export function useCompute(ws: Worksheet, delay = 60, auto = true): ComputeState
   const [state, setState] = useState<ComputeState>({ result: null, busy: true });
   const worker = useRef<Worker | null>(null);
   const reqId = useRef(0);
+  const sentWs = useRef<Worksheet | undefined>(undefined);
   const lastMsg = useRef(Date.now());
   const pendingSince = useRef<number | null>(null);
   const [manualTick, setManualTick] = useState(0);
@@ -32,7 +35,7 @@ export function useCompute(ws: Worksheet, delay = 60, auto = true): ComputeState
         if (e.data.id !== reqId.current) return;
         if (e.data.progress) { setState(s => ({ ...s, busy: true, progress: e.data.progress })); return; }
         pendingSince.current = null;
-        setState({ result: e.data.result ?? null, busy: false, error: e.data.error });
+        setState({ result: e.data.result ?? null, busy: false, error: e.data.error, computedWs: sentWs.current });
       };
       w.onerror = () => { pendingSince.current = null; setState(s => ({ ...s, busy: false, error: 'Berechnung abgebrochen' })); };
       worker.current = w;
@@ -62,12 +65,13 @@ export function useCompute(ws: Worksheet, delay = 60, auto = true): ComputeState
     if (!auto && manualTick === 0) return;
     const t = setTimeout(() => {
       const id = ++reqId.current;
+      sentWs.current = ws;
       pendingSince.current = Date.now();
       setState(s => ({ ...s, busy: true, progress: undefined }));
       if (worker.current) {
         worker.current.postMessage({ id, ws });
       } else {
-        try { setState({ result: computeWorksheet(ws), busy: false }); } catch (e) { setState({ result: null, busy: false, error: String(e) }); }
+        try { setState({ result: computeWorksheet(ws), busy: false, computedWs: ws }); } catch (e) { setState({ result: null, busy: false, error: String(e) }); }
         pendingSince.current = null;
       }
     }, delay);

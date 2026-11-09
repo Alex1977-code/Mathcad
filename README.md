@@ -29,14 +29,38 @@ Voraussetzung: Node.js ≥ 20. Die App läuft komplett im Browser, es werden kei
 | Globale Definition | `g ≡ 9.81 m/s^2` (Taste `~`) |
 | Funktion | `f(x) := x^2 + 1` |
 | Index im Namen | `F_max`, `σ_c.d` |
-| Text | `"` tippen oder Werkzeugleiste → Text |
+| Text | `"` tippen oder Menüband → Text |
 | Formel abschließen | `Enter` – das rote Kreuz springt darunter, weiter tippen |
 | Griechische Buchstaben | `\alpha` + Leertaste, `Strg+G` (a → α) oder Palette |
 | Vorschläge | erscheinen beim Tippen, `Tab` übernimmt |
 
-Alle Werkzeuge der Leiste fügen die passende Schreibweise ein (Bruch, Wurzel, Summe, Integral, Matrix …). Die **Kurzreferenz** in der Seitenleiste zeigt die komplette Syntax, die **Variablenliste** alle definierten Größen mit aktuellem Wert (Klick springt zur Definition).
+### Oberfläche
 
-Weitere Tastenkürzel: `Strg+Z/Y` (Rückgängig/Wiederholen), `Strg+C/X/V/D` (Kopieren/Ausschneiden/Einfügen/Duplizieren), Pfeiltasten (Auswahl oder Kreuz verschieben), `Entf`, `Strg+S` (Speichern), `Strg+O` (Öffnen), `Strg+P` (Drucken/PDF), `Strg ±` (Zoom). Bereiche lassen sich mit der Maus verschieben, per Rahmen mehrfach auswählen, ausrichten und mit „Bereiche trennen“ entzerren.
+![Menüband](docs/screenshot-menueband.png)
+
+- **Menüband mit Registerkarten** wie in Office/Mathcad Prime: *Start* (Zwischenablage, Bereiche, Bearbeiten, Anordnen), *Mathematik* (Operatoren, Analysis, Logik, griechische Buchstaben, Einheiten, Konstanten), *Matrizen & Programme* (Matrix mit Größenwähler, Matrixfunktionen, if/for/while, Solve-Blöcke), *Berechnung* (Jetzt berechnen, automatisch/manuell, Nachkommastellen, Exponentialschwelle, Dezimalpunkt/-komma, Startindex), *Ansicht* (Zoom, Raster, Seitenleiste, Hell/Dunkel).
+- **Befehlspalette** `Strg+K`: jeden Befehl per Suchbegriff finden und ausführen.
+- **Kontextmenü** per Rechtsklick auf Bereiche (Bearbeiten, Auswertung deaktivieren, Kopieren, Duplizieren, Ausrichten, Löschen) und auf die leere Seite (Formel/Text/Diagramm hier einfügen).
+- **Seitenleiste**: *Variablen* mit aktuellen Werten, *Probleme* (alle Fehler und Abweichungen zu Mathcad, Klick springt hin), *Gliederung* aus den Überschriften, *Hilfe* mit der kompletten Syntax.
+- **Statusleiste** mit Berechnungsfortschritt, Modus automatisch/manuell (`F9` rechnet), Fehlerzahl, Mathcad-Abgleich und Zoom. Bereiche, die gerade neu berechnet werden, sind gedimmt markiert.
+
+Tastenkürzel: `Strg+K` (Befehle), `F9` (Berechnen), `F1` (Hilfe), `Strg+Z/Y` (Rückgängig/Wiederholen), `Strg+C/X/V/D` (Kopieren/Ausschneiden/Einfügen/Duplizieren), Pfeiltasten (Auswahl oder Kreuz verschieben), `Entf`, `Strg+S` (Speichern), `Strg+O` (Öffnen), `Strg+P` (Drucken/PDF), `Strg ±` (Zoom). Bereiche lassen sich mit der Maus verschieben, per Rahmen mehrfach auswählen, ausrichten und mit „Bereiche trennen“ entzerren.
+
+### Geschwindigkeit
+
+- **Inkrementelle Berechnung**: Nach einer Änderung wird nur ab dem geänderten Bereich neu gerechnet (wie in Mathcad); der Zustand davor wird aus Zwischenständen übernommen. Ergebnisse sind nachweislich identisch zur Vollberechnung (`tests/incremental.test.ts`).
+- **Unterbrechbar**: Die Berechnung läuft in Zeitscheiben in einem Web Worker. Tippt man weiter, wird die laufende Rechnung abgebrochen und ab der neuen Änderung fortgesetzt – die Oberfläche bleibt immer bedienbar.
+- **Schneller Rechenkern** für Größen mit Einheiten, elementweise Matrixoperationen und wachsende Vektoren.
+
+Messung (`npx tsx scripts/bench.mts`, Node 22):
+
+| Arbeitsblatt | vorher | jetzt | Änderung am Ende |
+|---|---:|---:|---:|
+| RC_col (280 Bereiche, Solve-Block) | 1 233 ms | 445 ms | 3 ms |
+| biaxial_bending (Doppelintegrale im Solve-Block) | 20 242 ms | 4 635 ms | 1 ms |
+| statistics | 16 050 ms | 1 038 ms | 7 ms |
+| probability | 10 783 ms | 458 ms | 5 ms |
+| alle Testblätter zusammen | 51 437 ms | 9 295 ms | – |
 
 ### Sprachumfang
 
@@ -81,7 +105,8 @@ Die Ergebnisse wurden auf mehreren Ebenen geprüft:
    - 36 Mathcad-Prime-Dateien (`tests/fixtures/mathcad/prime`, MIT-Lizenz, aus [mcad2py](https://github.com/ChristianCruger/mcad2py)): **502 von 570** gespeicherten Ergebnissen reproduziert (88 %); 19 Dateien zu 100 %, darunter Stahlbeton-Nachweise mit Doppelintegralen und Solve-Blöcken (`RC_col` 87/87, `biaxial_bending` 4/4). Die übrigen Abweichungen betreffen fast ausschließlich nicht unterstützte Spezialfunktionen, eingebundene fremde Arbeitsblätter und Zufallszahlen (Mathcads Zufallsgenerator ist nicht nachbildbar; solche Ergebnisse werden vom Abgleich ausgenommen). Die vollständige Liste schreibt der Test nach `test-results/mathcad-prime-verifikation.txt`.
    - Handgeschriebenes Mathcad-15-Dokument (`beispiel_mathcad15.xmcd`): 7/7.
    - Zusätzlich lokal geprüft: 9 reale Mathcad-14/15-Arbeitsblätter aus öffentlichen GitHub-Projekten – **37 von 40** Ergebnissen identisch (die 3 übrigen rufen eine externe REFPROP-DLL auf). Eigene Dateien lassen sich genauso prüfen: `MATHCAD_SAMPLES=/pfad/zu/dateien npm run verify:mathcad`.
-3. **End-to-End-Test im Browser** (`e2e/run.mjs`, Playwright/Chromium): Eingabe per Tastatur inkl. `:`→`:=`, Ergebnisse und Einheiten, Fehlermeldungen, Rückgängig/Wiederholen, Autovervollständigung, griechische Buchstaben, mehrzeilige Programme, Diagramme, Speichern/Öffnen, Import von `.xmcd`/`.mcdx` mit Ergebnisabgleich, Dunkelmodus, Hinweis bei `.mcd`, keine JavaScript-Fehler.
+3. **Inkrementelle Berechnung** (`tests/incremental.test.ts`): Auf sieben Arbeitsblättern werden je 17 Änderungsarten (Bearbeiten, Löschen, Verschieben, Format) inkrementell und vollständig berechnet – die Ergebnisse müssen exakt übereinstimmen; ebenso nach einer unterbrochenen Berechnung.
+4. **End-to-End-Test im Browser** (`e2e/run.mjs`, Playwright/Chromium): Eingabe per Tastatur inkl. `:`→`:=`, Ergebnisse und Einheiten, Fehlermeldungen, Rückgängig/Wiederholen, Autovervollständigung, griechische Buchstaben, mehrzeilige Programme, Diagramme, Speichern/Öffnen, Import von `.xmcd`/`.mcdx` mit Ergebnisabgleich, Dunkelmodus, Befehlspalette, Kontextmenü, manuelle Berechnung mit F9, Probleme-Liste, Gliederung, Reaktionszeit auf großen Blättern, Hinweis bei `.mcd`, keine JavaScript-Fehler.
 
 ```bash
 npm test                         # Unit- und Import-Verifikation
@@ -93,16 +118,18 @@ npm run build && npm run e2e     # Browser-Test, Screenshots in e2e/out/
 ```
 src/engine/   Rechenkern (unabhängig von der Oberfläche)
   parser.ts      Text-Syntax → Syntaxbaum (inkl. eingerückter Programme)
-  evaluator.ts   Auswertung (mathjs für Einheiten/komplexe Zahlen/Matrizen)
+  evaluator.ts   Auswertung (mathjs für komplexe Zahlen/Matrixalgebra)
+  quantity.ts    schnelle Arithmetik für Größen mit Einheiten
   builtins.ts    Funktionsbibliothek, Solve-Blöcke, Konstanten
   numeric.ts     Integration, Ableitung, Nullstellen, Levenberg-Marquardt
   stats.ts       Spezielle Funktionen und Verteilungen
-  worksheet.ts   Rechenreihenfolge, globale Definitionen, Bereichsvariablen, Diagrammdaten
+  worksheet.ts   Rechenreihenfolge, inkrementelle/unterbrechbare Berechnung, Bereichsvariablen, Diagrammdaten
   format.ts      Zahlen- und Einheitenformatierung
   latex.ts       Syntaxbaum → LaTeX (Darstellung mit KaTeX)
   verify.ts      Vergleich mit gespeicherten Mathcad-Ergebnissen
 src/import/   Mathcad-Import (math30/math50-XML → Syntaxbaum → Text)
 src/ui/       React-Oberfläche; Berechnung läuft in einem Web Worker
+  actions.ts     zentrale Befehle (Menüband, Kontextmenü, Befehlspalette, Tastenkürzel)
 ```
 
 ## Lizenz

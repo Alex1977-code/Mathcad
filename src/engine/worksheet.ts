@@ -109,7 +109,7 @@ export class WorksheetEngine {
 
   constructor(public ws: Worksheet, public opts: ComputeOptions = {}) {
     this.ev = new Evaluator({ origin: ws.settings.origin ?? 0 });
-    this.fmt = { decimals: ws.settings.decimals ?? 3, expThreshold: ws.settings.expThreshold ?? 7, maxMatrix: 12 };
+    this.fmt = { decimals: ws.settings.decimals ?? 3, expThreshold: ws.settings.expThreshold ?? 7, maxMatrix: 12, decimalComma: !!ws.settings.decimalComma };
   }
 
   latexCtx(scope: Scope, highlight?: string): LatexCtx {

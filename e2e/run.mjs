@@ -34,7 +34,7 @@ await page.addInitScript(() => { delete window.showSaveFilePicker; });
 page.on('dialog', (d) => d.accept().catch(() => undefined));
 
 const shot = (name) => page.screenshot({ path: join(out, name) });
-const idle = async () => { await page.waitForSelector('.dot.ok, .dot.err', { timeout: 60000 }); await page.waitForTimeout(150); };
+const idle = async () => { await page.waitForSelector('.dot.ok, .dot.err, .dot.warn', { timeout: 60000 }); await page.waitForTimeout(150); };
 const lastRegionText = () => page.locator('.region.math-region').last().innerText();
 
 try {
@@ -130,7 +130,7 @@ try {
 
   /* 7 · plot */
   await page.mouse.click(420, 760);
-  await page.click('.ribbon >> text=Diagramm');
+  await page.click('.rbody .rbig:has-text("Diagramm")');
   await page.waitForSelector('.side >> text=Diagramm bearbeiten');
   await page.fill('.trace-card input[placeholder="z. B. sin(x)"]', 'sin(x)*a/m');
   await page.fill('input[placeholder="auto"] >> nth=0', '0');
@@ -190,7 +190,72 @@ try {
   ok((await page.evaluate(() => document.documentElement.dataset.theme)) === 'dark', 'Dunkles Design aktivierbar');
   await shot('09-dunkel.png');
 
-  /* 12 · legacy .mcd gives a helpful message */
+  /* 12 · professional GUI: palette, context menu, manual calculation, panels */
+  await page.click('button[title="Helles Design"]');
+  page.on('dialog', (d) => d.accept().catch(() => undefined));
+  await page.click('.rtab.file');
+  await page.click('.menu >> text=Beispiel öffnen');
+  await idle();
+  ok((await page.locator('.rtab').count()) >= 5, 'Menüband mit Registerkarten');
+  await page.keyboard.press('Control+k');
+  await page.keyboard.type('dezimalkomma');
+  await page.keyboard.press('Enter');
+  await idle();
+  ok((await page.locator('.page').innerText()).includes('97,703'), 'Befehlspalette (Strg+K) schaltet auf Dezimalkomma: 97,703 kN·m');
+  const n0 = await page.locator('.region').count();
+  await page.locator('.region.math-region').nth(2).click({ button: 'right' });
+  await page.click('.ctxmenu >> text=Duplizieren');
+  ok((await page.locator('.region').count()) === n0 + 1, 'Kontextmenü (Rechtsklick) → Duplizieren');
+  await page.keyboard.press('Control+z');
+  await page.click('.status-item.calc-mode');
+  ok((await page.locator('.calc-mode').innerText()).includes('Manuell'), 'Manuelle Berechnung einschaltbar');
+  await page.locator('.region.math-region', { hasText: 'L' }).first().click();
+  await page.keyboard.press('Control+a');
+  await page.keyboard.type('L:7 m');
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(400);
+  ok((await page.locator('.calc-status').innerText()).includes('Nicht aktuell'), 'Im manuellen Modus wird „Nicht aktuell“ angezeigt');
+  await page.keyboard.press('F9');
+  await idle();
+  ok((await page.locator('.page').innerText()).includes('113,313'), 'F9 berechnet neu: M_Ed = 113,313 kN·m für L = 7 m');
+  await page.click('.status-item.calc-mode');
+  await page.click('.side-tabs button:has-text("Gliederung")');
+  ok((await page.locator('.outline button').count()) >= 5, 'Gliederung listet die Überschriften');
+  await page.mouse.click(420, 700);
+  await page.keyboard.type('nix + 1 =');
+  await page.keyboard.press('Enter');
+  await idle();
+  await page.click('.side-tabs button:has-text("Probleme")');
+  ok((await page.locator('.problem.err').count()) === 1, 'Probleme-Liste zeigt den Fehler');
+  await shot('10-probleme.png');
+  await page.click('.rtab:has-text("Mathematik")');
+  await shot('11-menueband-mathematik.png');
+  await page.click('.rtab:has-text("Start")');
+
+  /* 13 · responsiveness on a large imported sheet: an edit at the end is recalculated incrementally */
+  {
+    const fc = page.waitForEvent('filechooser');
+    await page.click('.topbar >> text=Importieren');
+    await (await fc).setFiles(join(root, 'tests/fixtures/mathcad/prime/RC_col.mcdx'));
+    await page.waitForSelector('.dialog');
+    await idle();
+    await page.click('.dialog >> text=Weiter');
+    await page.waitForTimeout(500);
+    await idle();
+    await page.evaluate(() => { const s = document.querySelector('.scroller'); s.scrollTop = s.scrollHeight; });
+    await page.waitForTimeout(300);
+    const last = page.locator('.region.math-region').last();
+    await last.click();
+    await page.keyboard.press('End');
+    const t0 = Date.now();
+    await page.keyboard.type(' ');
+    await page.keyboard.press('Enter');
+    await page.waitForSelector('.dot.ok', { timeout: 30000 });
+    const dt = Date.now() - t0;
+    ok(dt < 1500, `Änderung am Ende eines großen Blatts (RC_col, 280 Bereiche) ist nach ${dt} ms berechnet`);
+  }
+
+  /* 14 · legacy .mcd gives a helpful message */
   const fc3 = page.waitForEvent('filechooser');
   await page.click('.topbar >> text=Importieren');
   await (await fc3).setFiles({ name: 'alt.mcd', mimeType: 'application/octet-stream', buffer: Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 1, 2, 3]) });
