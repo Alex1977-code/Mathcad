@@ -112,7 +112,8 @@ export function paste(at?: { x: number; y: number }) {
   const cur = at ?? s.cursor ?? { x: minX + 24, y: minY + 24 };
   const copies = store.cloneRegions(clip, cur.x - minX, cur.y - minY);
   store.updateWs(w => ({ ...w, regions: [...w.regions, ...copies] }));
-  store.set({ selection: copies.map(r => r.id) });
+  // the next paste lands offset, not exactly on top of this one
+  store.set({ selection: copies.map(r => r.id), cursor: { x: cur.x + 24, y: cur.y + 24 } });
 }
 
 export function duplicateSelection() {
@@ -144,7 +145,7 @@ export function editSelection() {
   if (!r) return;
   if (r.type === 'plot') { store.set({ plotEditor: r.id }); return; }
   if (r.type !== 'math' && r.type !== 'text') return;
-  store.checkpoint();
+  store.beginEdit(r.id);
   store.set({ editing: r.id, editOriginal: r.type === 'math' ? r.src : null });
 }
 

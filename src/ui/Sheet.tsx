@@ -61,7 +61,7 @@ export function Sheet({ result, onOpenExample, onImport, pending }: Props) {
 
   const startEdit = (r: Region) => {
     if (r.type !== 'math' && r.type !== 'text') return;
-    store.checkpoint();
+    store.beginEdit(r.id);
     store.set({ editing: r.id, editOriginal: r.type === 'math' ? r.src : null, selection: [r.id] });
   };
 
@@ -71,7 +71,7 @@ export function Sheet({ result, onOpenExample, onImport, pending }: Props) {
     if (!r) { store.set({ editing: null }); return; }
     const empty = (r.type === 'math' && !r.src.trim()) || (r.type === 'text' && !r.html.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, '').trim());
     if (empty) {
-      store.updateWs(w => ({ ...w, regions: w.regions.filter(x => x.id !== id) }), false);
+      store.discardRegion(id);
       store.set({ editing: null, selection: [], cursor: { x: r.x, y: r.y } });
       return;
     }
@@ -130,7 +130,9 @@ export function Sheet({ result, onOpenExample, onImport, pending }: Props) {
       if (!d.moved && Math.hypot(dx, dy) < 4) return;
       if (!d.moved) { d.moved = true; if (d.kind !== 'rubber') store.checkpoint(); }
       if (d.kind === 'move') {
-        const sx = snap(dx), sy = snap(dy);
+        // the group keeps its shape: limited by its leftmost/topmost region
+        const os = [...d.orig.values()];
+        const sx = Math.max(snap(dx), -Math.min(...os.map(o => o.x))), sy = Math.max(snap(dy), -Math.min(...os.map(o => o.y)));
         store.updateWs(ws => ({
           ...ws,
           regions: ws.regions.map(r => {
@@ -179,7 +181,9 @@ export function Sheet({ result, onOpenExample, onImport, pending }: Props) {
   const onKeyDown = (e: React.KeyboardEvent) => {
     const s = store.get();
     if (s.editing || s.palette || s.contextMenu) return;
-    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    // AltGr (German keyboard: [ ] { } \ | @ € µ ~) arrives as Ctrl+Alt and must still start a formula
+    const altGr = e.getModifierState?.('AltGraph') || (e.ctrlKey && e.altKey && e.key.length === 1);
+    if ((e.ctrlKey || e.metaKey || e.altKey) && !altGr) return;
     const cur = s.cursor ?? { x: MARGIN, y: MARGIN };
     if (e.key === 'Delete' || e.key === 'Backspace') {
       if (s.selection.length) { e.preventDefault(); store.deleteRegions(s.selection); }
@@ -245,7 +249,7 @@ export function Sheet({ result, onOpenExample, onImport, pending }: Props) {
           >
             <div className="page-margin" style={{ left: MARGIN }} />
             <div className="page-margin" style={{ left: PAGE_W - MARGIN }} />
-            {Array.from({ length: pages - 1 }, (_, i) => (
+            {Array.from({ length: Math.min(Math.max(pages - 1, 0), 2000) }, (_, i) => (
               <div key={i} className="page-break-line" style={{ top: (i + 1) * PAGE_H }}><span>Seite {i + 2}</span></div>
             ))}
             {ws.regions.map(r => {

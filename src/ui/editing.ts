@@ -37,7 +37,13 @@ export function insertSnippet(ta: HTMLTextAreaElement, snippet: string): string 
   const { selectionStart: s, selectionEnd: e, value } = ta;
   const selected = value.slice(s, e);
   let text = snippet;
+  const simple = /^[\p{L}\p{N}_.'°]+$/u.test(selected) || /^\(.*\)$/.test(selected);
   if (selected && text.includes('?')) text = text.replace('?', selected);
+  // postfix snippets (^2, !, %, ^T, ^-1 …) act on the selection instead of replacing it
+  else if (selected && /^[\^!%']/.test(text)) text = (simple ? selected : `(${selected})`) + text;
+  // directly after a name, number or bracket a template must not turn into a call a(…) or a name „anthroot“
+  const before = value.slice(0, s);
+  if (!selected && /[\p{L}\p{N}_)\]]$/u.test(before) && /^[\p{L}(√∫∑∏Σ∏]/u.test(text) && !text.includes(':=')) text = '*' + text;
   const next = value.slice(0, s) + text + value.slice(e);
   const ph = text.indexOf('?');
   const caret = ph >= 0 ? s + ph : s + text.length;

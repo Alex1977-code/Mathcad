@@ -57,7 +57,28 @@ class Store {
   get = () => this.state;
   set(patch: Partial<AppState>) {
     this.state = { ...this.state, ...patch };
+    // the edited region was left: record the undo step now, if anything changed
+    if (this.editBase && this.state.editing !== this.editBase.id) this.finishEdit();
     this.listeners.forEach(l => l());
+  }
+
+  /** Document before the current edit; becomes an undo step only if the edit changed something. */
+  private editBase: { id: string; ws: Worksheet } | null = null;
+
+  /** Start editing a region (no undo step yet: a mere click must neither add one nor clear redo). */
+  beginEdit(id: string) {
+    if (this.editBase) this.finishEdit();
+    this.editBase = { id, ws: this.state.ws };
+  }
+
+  private finishEdit() {
+    const b = this.editBase;
+    this.editBase = null;
+    if (b && b.ws !== this.state.ws) {
+      this.past.push(b.ws);
+      if (this.past.length > HISTORY_LIMIT) this.past.shift();
+      this.future = [];
+    }
   }
 
   /** Record the current document in the undo history. */
@@ -82,6 +103,16 @@ class Store {
     this.set({ selection: [r.id], editing: edit ? r.id : null, editOriginal: edit && r.type === 'math' ? r.src : null });
   }
 
+  /** Remove a region that was created and left empty: also drops the undo step of its creation. */
+  discardRegion(id: string) {
+    this.updateWs(ws => ({ ...ws, regions: ws.regions.filter(r => r.id !== id) }), false);
+    const top = this.past[this.past.length - 1];
+    const cur = this.state.ws.regions;
+    if (top && top.regions.length === cur.length && top.regions.every((r, i) => r === cur[i])) this.past.pop();
+    // a region that existed before the edit and was cleared stays an undoable change
+    if (this.editBase?.id === id && !this.editBase.ws.regions.some(r => r.id === id)) this.editBase = null;
+  }
+
   deleteRegions(ids: string[]) {
     if (!ids.length) return;
     const set = new Set(ids);
@@ -91,9 +122,15 @@ class Store {
 
   moveRegions(ids: string[], dx: number, dy: number, history = true) {
     const set = new Set(ids);
+    // the group moves as a whole: limited by its leftmost/topmost region (no regions on top of each other)
+    const moved = this.state.ws.regions.filter(r => set.has(r.id));
+    if (!moved.length) return;
+    dx = Math.max(dx, -Math.min(...moved.map(r => r.x)));
+    dy = Math.max(dy, -Math.min(...moved.map(r => r.y)));
+    if (dx === 0 && dy === 0) return;
     this.updateWs(ws => ({
       ...ws,
-      regions: ws.regions.map(r => (set.has(r.id) ? { ...r, x: Math.max(0, r.x + dx), y: Math.max(0, r.y + dy) } : r)),
+      regions: ws.regions.map(r => (set.has(r.id) ? { ...r, x: r.x + dx, y: r.y + dy } : r)),
     }), history);
   }
 
@@ -102,7 +139,7 @@ class Store {
   }
 
   load(ws: Worksheet, fileName: string | null) {
-    this.past = []; this.future = [];
+    this.past = []; this.future = []; this.editBase = null;
     const first = sortRegions(ws.regions)[0];
     this.set({
       ws, fileName, dirty: false, selection: [], editing: null, editOriginal: null, plotEditor: null,
@@ -113,6 +150,7 @@ class Store {
   }
 
   undo() {
+    if (this.editBase) this.finishEdit();
     const prev = this.past.pop();
     if (!prev) return;
     this.future.push(this.state.ws);
@@ -120,6 +158,7 @@ class Store {
   }
 
   redo() {
+    if (this.editBase) this.finishEdit();
     const next = this.future.pop();
     if (!next) return;
     this.past.push(this.state.ws);

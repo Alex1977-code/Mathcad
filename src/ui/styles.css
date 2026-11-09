@@ -117,7 +117,8 @@ button { cursor: pointer; }
 /* ------------------------------------------------------------------ */
 /* App layout                                                           */
 /* ------------------------------------------------------------------ */
-.app { display: grid; grid-template-rows: auto auto 1fr auto; height: 100%; }
+.app { display: grid; grid-template-rows: auto auto 1fr auto; grid-template-columns: minmax(0, 1fr); height: 100%; width: 100%; overflow: hidden; }
+.app > * { min-width: 0; }
 .main { display: grid; grid-template-columns: 1fr auto; min-height: 0; }
 
 .topbar {
@@ -177,7 +178,7 @@ button { cursor: pointer; }
 .menu .menu-label { padding: 6px 10px 3px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-faint); }
 
 /* ribbon (tabbed) */
-.ribbon-wrap { background: var(--bg-elev); border-bottom: 1px solid var(--border); box-shadow: 0 1px 0 rgba(16, 24, 40, .02); }
+.ribbon-wrap { min-width: 0; background: var(--bg-elev); border-bottom: 1px solid var(--border); box-shadow: 0 1px 0 rgba(16, 24, 40, .02); }
 .rtabs { display: flex; align-items: flex-end; gap: 2px; padding: 0 12px; height: 34px; }
 .rtab {
   border: 0; background: transparent; padding: 8px 13px 7px; font-weight: 550; color: var(--text-soft);
@@ -222,7 +223,7 @@ button { cursor: pointer; }
 .rsmall .ico svg { width: 14px; height: 14px; display: block; }
 .rsymgrid { display: grid; grid-template-rows: repeat(2, 30px); grid-auto-flow: column; gap: 2px; }
 .rsym {
-  min-width: 34px; height: 30px; padding: 0 5px; border: 1px solid transparent; border-radius: 6px; background: transparent;
+  min-width: 34px; height: 30px; overflow: hidden; padding: 0 5px; border: 1px solid transparent; border-radius: 6px; background: transparent;
   display: grid; place-items: center; color: var(--text);
 }
 .rsym .katex { font-size: 1em; }
@@ -337,7 +338,14 @@ button { cursor: pointer; }
 .sym-note { color: var(--text-faint); }
 
 /* math editor */
-.math-editor { display: flex; flex-direction: column; gap: 4px; min-width: 220px; }
+.math-editor { display: flex; flex-direction: column; gap: 4px; min-width: 220px; position: relative; }
+.math-editor .me-below {
+  position: absolute; top: 100%; left: 0; min-width: 100%; z-index: 30; pointer-events: none;
+  display: flex; flex-direction: column; gap: 3px; margin-top: 3px; padding: 4px 6px;
+  background: color-mix(in srgb, var(--bg-elev) 94%, transparent); border: 1px solid var(--border); border-radius: 7px;
+  box-shadow: 0 4px 14px rgba(16, 24, 40, .08);
+}
+.math-editor .me-below .preview { border-top: 0; padding-top: 0; }
 .math-editor textarea {
   font-family: var(--font-mono); font-size: 13.5px; line-height: 1.45; border: 0; outline: none; resize: none;
   background: transparent; padding: 0; min-width: 200px; white-space: pre; overflow: hidden; color: var(--text);
@@ -459,7 +467,7 @@ kbd { font-family: var(--font-mono); font-size: 11px; border: 1px solid var(--bo
 /* Status bar, dialogs, toasts                                          */
 /* ------------------------------------------------------------------ */
 .statusbar {
-  display: flex; align-items: center; gap: 12px; padding: 4px 12px; font-size: 12px; color: var(--text-soft);
+  display: flex; align-items: center; gap: 12px; overflow-x: auto; scrollbar-width: none; padding: 4px 12px; font-size: 12px; color: var(--text-soft);
   background: var(--bg-elev); border-top: 1px solid var(--border); min-height: 30px;
 }
 .status-item { display: inline-flex; align-items: center; gap: 6px; border: 0; background: transparent; padding: 3px 7px; border-radius: 6px; white-space: nowrap; }

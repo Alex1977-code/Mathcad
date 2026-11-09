@@ -19,7 +19,8 @@ export function pickFile(accept = ACCEPTED_EXTENSIONS): Promise<File | null> {
 export async function readWorksheet(file: File): Promise<Worksheet> {
   const buf = await file.arrayBuffer();
   const ws = await loadWorksheetFile(file.name, buf);
-  if (/\.(fwk|json)$/i.test(file.name)) currentHandle = null;
+  // a document opened this way has no file handle: Ctrl+S must ask for a file name (never overwrite another file)
+  currentHandle = null;
   return ws;
 }
 
@@ -67,21 +68,54 @@ export async function saveWorksheet(ws: Worksheet, saveAs = false): Promise<stri
 
 export function resetFileHandle() { currentHandle = null; }
 
-/** Export the rendered worksheet as a standalone HTML page. */
-export function exportHtml(ws: Worksheet) {
+/** Export the rendered worksheet as a standalone HTML page (light theme, formula fonts embedded). */
+export async function exportHtml(ws: Worksheet) {
   const page = document.querySelector('.page') as HTMLElement | null;
   if (!page) return;
   const clone = page.cloneNode(true) as HTMLElement;
   clone.style.transform = 'none';
   clone.querySelectorAll('.grip,.check-badge,.crosshair,.welcome,.page-break-line,.page-margin,.plot-edit-btn,.error-chip').forEach(e => e.remove());
   clone.querySelectorAll('.region').forEach(e => e.classList.remove('selected', 'editing'));
-  const css = Array.from(document.styleSheets).map(s => { try { return Array.from(s.cssRules).map(r => r.cssText).join('\n'); } catch { return ''; } }).join('\n');
-  const html = `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${ws.title.replace(/</g, '&lt;')}</title>
-<style>${css}
-body{overflow:auto;background:#eef0f4}.page{margin:24px auto;background-image:none}.region{border-color:transparent!important;background:transparent!important}</style></head>
-<body><div class="page" style="${clone.getAttribute('style')}">${clone.innerHTML}</div></body></html>`;
-  download(safeName(ws.title) + '.html', new Blob([html], { type: 'text/html' }));
+  const fontCache = new Map<string, string>();
+  const parts: string[] = [];
+  for (const sheet of Array.from(document.styleSheets)) {
+    let rules: CSSRule[];
+    try { rules = Array.from(sheet.cssRules); } catch { continue; }
+    for (const r of rules) {
+      // the export is always light: drop the dark variants
+      if (r instanceof CSSMediaRule && /prefers-color-scheme/.test(r.conditionText)) continue;
+      if (/\[data-theme="?dark"?\]/.test(r.cssText)) continue;
+      if (r instanceof CSSFontFaceRule) {
+        // embed the woff2 font so formulas look right offline
+        const m = /url\(["']?([^"')]+\.woff2)["']?\)/.exec(r.cssText);
+        if (!m) continue;
+        const url = new URL(m[1], sheet.href ?? location.href).href;
+        let data = fontCache.get(url);
+        if (data === undefined) {
+          try { data = `data:font/woff2;base64,${bytesToB64(new Uint8Array(await (await fetch(url)).arrayBuffer()))}`; } catch { data = ''; }
+          fontCache.set(url, data);
+        }
+        if (!data) continue;
+        const desc = r.cssText.replace(/src:[^;]+;/, `src: url(${data}) format("woff2");`);
+        parts.push(desc);
+        continue;
+      }
+      parts.push(r.cssText);
+    }
+  }
+  const title = String(ws.title ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  const html = `<!doctype html><html lang="de" data-theme="light"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title}</title>
+<style>${parts.join('\n')}
+:root{color-scheme:light}body{overflow:auto;background:#eef0f4;color:#1d2330}.page{margin:24px auto;background:#fff;background-image:none}.region{border-color:transparent!important;background:transparent!important}</style></head>
+<body><div class="page" style="${(clone.getAttribute('style') ?? '').replace(/"/g, '&quot;')}">${clone.innerHTML}</div></body></html>`;
+  download(safeName(String(ws.title ?? '')) + '.html', new Blob([html], { type: 'text/html' }));
   void regionElements;
+}
+
+function bytesToB64(bytes: Uint8Array): string {
+  let s = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(s);
 }
 
 export const AUTOSAVE = 'formelwerk.autosave.v1';

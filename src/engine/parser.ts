@@ -415,6 +415,9 @@ export function parseExpression(src: string, allowRange = true): Node {
   const n = p.parseTop(allowRange);
   if (!p.atEnd()) {
     const t = p.peek();
+    if (t.v === ',' && p.peek(-1)?.t === 'num' && p.peek(1)?.t === 'num') {
+      throw new ParseError('Unerwartetes „,“ – Dezimalzahlen mit Punkt eingeben (2.5); das Komma trennt Argumente', t.pos, t.end);
+    }
     throw new ParseError(`Unerwartetes „${t.v}“`, t.pos, t.end);
   }
   return n;
@@ -449,7 +452,11 @@ function parseTarget(src: string): DefTarget {
       if (p.eat(']')) break;
       if (!p.eat(';')) p.expect(',');
     }
-    if (!p.atEnd()) { const x = p.peek(); throw new ParseError(`Unerwartetes „${x.v}“`, x.pos, x.end); }
+    if (!p.atEnd()) {
+      const x = p.peek();
+      if (x.v === ',') throw new ParseError('Unerwartetes „,“ – Dezimalzahlen mit Punkt eingeben (2.5); das Komma trennt Argumente', x.pos, x.end);
+      throw new ParseError(`Unerwartetes „${x.v}“`, x.pos, x.end);
+    }
     const first = multi[0];
     return { name: first.k === 'id' ? first.name : (first as { a: { name: string } }).a.name, multi };
   }

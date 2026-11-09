@@ -475,7 +475,12 @@ export class WorksheetEngine {
     const xLabels: string[] = [], yLabels: string[] = [];
     const scalar = (v: Val, unit: Val | undefined, dimsOut: { d?: number[] }): number => {
       let x = v;
-      if (unit !== undefined) x = this.ev.divide(v, unit, false);
+      if (unit !== undefined) {
+        x = this.ev.divide(v, unit, false);
+        if (isUnit(x) && (x as Unit).dimensions.some((d, i) => i !== 7 && Math.abs(d) > 1e-9)) {
+          throw new CalcError(`Achseneinheit passt nicht zum Wert (übrig: ${unitFactorsText(siUnitFactors((x as Unit).dimensions))})`);
+        }
+      }
       if (isUnit(x)) { dimsOut.d = (x as Unit).dimensions; return (x as Unit).value as number; }
       if (isComplex(x)) return (x as { re: number }).re;
       if (typeof x === 'number') return x;
@@ -501,12 +506,14 @@ export class WorksheetEngine {
           }
         } else if (quickVar) {
           // QuickPlot: sample the free variable over the axis limits
-          const a = xmin ?? -10, b = xmax ?? 10;
+          // logarithmic x axis: positive interval, logarithmic sampling
+          const b = r.logX ? (xmax !== undefined && xmax > 0 ? xmax : 10) : xmax ?? 10;
+          const a = r.logX ? (xmin !== undefined && xmin > 0 && xmin < b ? xmin : b / 1000) : xmin ?? -10;
           const N = 400;
           const local = new Scope(scope);
           let firstErr: unknown;
           for (let i = 0; i <= N; i++) {
-            const t = a + (b - a) * i / N;
+            const t = r.logX ? a * Math.pow(b / a, i / N) : a + (b - a) * i / N;
             // t is in display units: x = t · (axis unit)
             local.set(quickVar, xUnitVal !== undefined ? this.ev.multiply(t, xUnitVal, false) : t);
             try {

@@ -150,6 +150,8 @@ function MathEditor({ region, result, variables, onCommit }: Omit<Props, 'editin
     el.style.width = Math.max(200, el.scrollWidth + 12) + 'px';
   }, [src]);
 
+  /** Name being typed before the caret (without leading digits: "3\al" → "\al"). */
+  const identBefore = (before: string) => { const m = IDENT_RE.exec(before); return m ? m[0].replace(/^[0-9.]+/, '') : ''; };
   const sugg = useMemo(() => suggestions(prefix, variables), [prefix, variables]);
   const { latex, parseError } = composeLatex(src, result);
 
@@ -157,9 +159,7 @@ function MathEditor({ region, result, variables, onCommit }: Omit<Props, 'editin
     const el = ta.current;
     if (!el) return;
     const before = el.value.slice(0, el.selectionStart);
-    const m = IDENT_RE.exec(before);
-    const p = m ? m[0] : '';
-    setPrefix(/^[0-9.]/.test(p) ? '' : p);
+    setPrefix(identBefore(before));
     setAcIndex(0);
     acNavigated.current = false;
   };
@@ -167,7 +167,8 @@ function MathEditor({ region, result, variables, onCommit }: Omit<Props, 'editin
   const accept = (s: { text: string }) => {
     const el = ta.current!;
     const pos = el.selectionStart;
-    const start = pos - prefix.length;
+    // measured again: the state may lag behind the last keystroke
+    const start = pos - identBefore(el.value.slice(0, pos)).length;
     const next = el.value.slice(0, start) + s.text + el.value.slice(pos);
     setSrc(next, start + s.text.length);
     setPrefix('');
@@ -175,7 +176,9 @@ function MathEditor({ region, result, variables, onCommit }: Omit<Props, 'editin
   };
 
   const commit = () => {
-    const h = box.current?.parentElement?.getBoundingClientRect().height ?? 30;
+    // height of the formula as it will be shown (not of the editor with its hints)
+    const pv = box.current?.querySelector('.preview') as HTMLElement | null;
+    const h = Math.max(pv?.getBoundingClientRect().height ?? 0, box.current?.querySelector('textarea')?.getBoundingClientRect().height ?? 0) || 30;
     onCommit(region.id, h / store.get().zoom);
   };
 
@@ -200,7 +203,7 @@ function MathEditor({ region, result, variables, onCommit }: Omit<Props, 'editin
       const orig = store.get().editOriginal;
       if (!orig || !orig.trim()) {
         // cancelling a new formula removes it again
-        store.updateWs(ws => ({ ...ws, regions: ws.regions.filter(r => r.id !== region.id) }), false);
+        store.discardRegion(region.id);
         store.set({ editing: null, selection: [] });
         return;
       }
@@ -233,9 +236,12 @@ function MathEditor({ region, result, variables, onCommit }: Omit<Props, 'editin
       return;
     }
     // Mathcad style:  ":"  →  ":="   and  "~" → "≡"
-    if (e.key === ':' && v[s] !== '=' && v[s - 1] !== ':' && !v.slice(0, s).includes(':=')) {
+    // only the current line counts (program lines: "a:" → "a ← "); nothing to define at the start of a line
+    const lineStart = v.lastIndexOf('\n', s - 1) + 1;
+    const linePrefix = v.slice(lineStart, s);
+    if (e.key === ':' && v[s] !== '=' && v[s - 1] !== ':' && linePrefix.trim() !== '' && !/:=|←/.test(linePrefix)) {
       e.preventDefault();
-      const ins = (v[s - 1] === ' ' ? '' : ' ') + ':= ';
+      const ins = (v[s - 1] === ' ' ? '' : ' ') + (lineStart > 0 ? '← ' : ':= ');
       setSrc(v.slice(0, s) + ins + v.slice(end), s + ins.length);
       expanded.current = true;
       return;
@@ -278,10 +284,13 @@ function MathEditor({ region, result, variables, onCommit }: Omit<Props, 'editin
         onClick={updatePrefix}
         onBlur={() => setTimeout(() => { if (store.get().editing === region.id && document.activeElement !== ta.current) commit(); }, 120)}
       />
-      <div className="preview" dangerouslySetInnerHTML={{ __html: latex ? renderLatex(latex) : '<span class="editor-hint">Vorschau</span>' }} />
-      {errMsg && <div className="editor-error">⚠ {errMsg}</div>}
-      <div className="editor-hint">
-        {isProgram ? <>Enter = neue Zeile · <kbd>Strg</kbd>+<kbd>Enter</kbd> = fertig</> : <><kbd>Enter</kbd> fertig · <kbd>:</kbd> definiert · <kbd>=</kbd> am Ende rechnet · <kbd>Esc</kbd> abbrechen</>}
+      {/* preview and hints float below the input: they neither push nor block the formulas underneath */}
+      <div className="me-below">
+        <div className="preview" dangerouslySetInnerHTML={{ __html: latex ? renderLatex(latex) : '<span class="editor-hint">Vorschau</span>' }} />
+        {errMsg && <div className="editor-error">⚠ {errMsg}</div>}
+        <div className="editor-hint">
+          {isProgram ? <>Enter = neue Zeile · <kbd>Strg</kbd>+<kbd>Enter</kbd> = fertig</> : <><kbd>Enter</kbd> fertig · <kbd>:</kbd> definiert · <kbd>=</kbd> am Ende rechnet · <kbd>Esc</kbd> abbrechen</>}
+        </div>
       </div>
       {sugg.length > 0 && prefix && (
         <div className="ac" style={{ top: '100%', left: 0 }}>

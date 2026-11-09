@@ -26,6 +26,7 @@ export function linearTicks(min: number, max: number, target = 6): number[] {
 
 function logTicks(min: number, max: number): number[] {
   const out: number[] = [];
+  if (!(min > 0 && max > 0 && isFinite(min) && isFinite(max))) return out;
   for (let e = Math.floor(Math.log10(min)); e <= Math.ceil(Math.log10(max)); e++) out.push(Math.pow(10, e));
   return out.filter(v => v >= min * 0.999 && v <= max * 1.001);
 }
@@ -46,10 +47,15 @@ export function PlotRegionView({ region, data, onEdit }: Props) {
     const xs = data.traces.flatMap(t => finite(t.x, !!region.logX));
     const ys = data.traces.flatMap(t => finite(t.y, !!region.logY));
     if (!xs.length || !ys.length) return null;
-    let x0 = data.xLim[0] ?? Math.min(...xs), x1 = data.xLim[1] ?? Math.max(...xs);
-    let y0 = data.yLim[0] ?? Math.min(...ys), y1 = data.yLim[1] ?? Math.max(...ys);
-    if (x0 === x1) { x0 -= 1; x1 += 1; }
-    if (y0 === y1) { const d = Math.abs(y0) * 0.1 || 1; y0 -= d; y1 += d; }
+    // limits that do not fit a logarithmic axis (≤ 0) are ignored
+    const lim = (v: number | null, log: boolean) => (v === null || !isFinite(v) || (log && v <= 0) ? null : v);
+    let x0 = lim(data.xLim[0], !!region.logX) ?? Math.min(...xs), x1 = lim(data.xLim[1], !!region.logX) ?? Math.max(...xs);
+    let y0 = lim(data.yLim[0], !!region.logY) ?? Math.min(...ys), y1 = lim(data.yLim[1], !!region.logY) ?? Math.max(...ys);
+    // "from" greater than "to": swap
+    if (x0 > x1) [x0, x1] = [x1, x0];
+    if (y0 > y1) [y0, y1] = [y1, y0];
+    if (x0 === x1) { if (region.logX) { x0 /= 10; x1 *= 10; } else { x0 -= 1; x1 += 1; } }
+    if (y0 === y1) { if (region.logY) { y0 /= 10; y1 *= 10; } else { const d = Math.abs(y0) * 0.1 || 1; y0 -= d; y1 += d; } }
     if (!region.logY && data.yLim[0] === null && data.yLim[1] === null) {
       const py = (y1 - y0) * 0.06; y0 -= py; y1 += py;
       const t = linearTicks(y0, y1, Math.max(3, Math.round((H - pad.t - pad.b) / 45)));

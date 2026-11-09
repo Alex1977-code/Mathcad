@@ -101,11 +101,11 @@ export function App() {
     if (name) { store.set({ dirty: false, fileName: name }); notify(`Gespeichert: ${name}`); }
   };
   const newDoc = () => { if (!confirmDiscard()) return; resetFileHandle(); store.load(emptyWorksheet(), null); };
-  const openExample = () => { if (!confirmDiscard()) return; store.load(exampleWorksheet(), null); };
+  const openExample = () => { if (!confirmDiscard()) return; resetFileHandle(); store.load(exampleWorksheet(), null); };
 
   setAppHandlers({
     openFile: () => openFile(), save: (as) => save(as), newDoc, openExample,
-    exportHtml: () => exportHtml(store.get().ws), print: () => setTimeout(() => window.print(), 50),
+    exportHtml: () => { exportHtml(store.get().ws).catch(e => notify('Export fehlgeschlagen: ' + (e as Error).message, true)); }, print: () => setTimeout(() => window.print(), 50),
     toggleTheme, showReport: () => setReport(true),
   });
 
@@ -135,9 +135,38 @@ export function App() {
       if (mod && e.key === '0') { e.preventDefault(); setZoom(1); return; }
     };
     window.addEventListener('keydown', onKey);
+    // while a formula or text is being edited the editors stop the key events: the global shortcuts are
+    // handled before them (capture phase); the edit is committed first (blur commits after ~120 ms)
+    const onKeyCapture = (e: KeyboardEvent) => {
+      if (!store.get().editing) return;
+      const mod = e.ctrlKey || e.metaKey;
+      const k = e.key.toLowerCase();
+      let action: (() => void) | null = null;
+      if (mod && k === 's') { const as = e.shiftKey; action = () => save(as); }
+      else if (mod && k === 'o') action = () => openFile();
+      else if (mod && k === 'p') action = () => window.print();
+      else if (mod && k === 'k') action = () => store.set({ palette: !store.get().palette });
+      else if (e.key === 'F9') action = () => recalcNow();
+      else if (e.key === 'F1') action = () => showSide('help');
+      else if (mod && (e.key === '+' || e.key === '=')) { e.preventDefault(); e.stopPropagation(); zoomBy(0.1); return; }
+      else if (mod && e.key === '-') { e.preventDefault(); e.stopPropagation(); zoomBy(-0.1); return; }
+      if (!action) return;
+      e.preventDefault();
+      e.stopPropagation();
+      (document.activeElement as HTMLElement | null)?.blur?.();
+      setTimeout(action, 160);
+    };
+    window.addEventListener('keydown', onKeyCapture, true);
+    // after a click in the side panel the sheet keeps the keyboard (Delete, arrows, typing)
+    const onMouseUp = (e: MouseEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (store.get().editing || !t?.closest?.('.side') || t.closest('input, textarea, select, [contenteditable="true"]')) return;
+      setTimeout(() => { if (!document.activeElement?.closest?.('input, textarea, select, .side [tabindex]')) (document.querySelector('.scroller') as HTMLElement | null)?.focus({ preventScroll: true }); }, 0);
+    };
+    window.addEventListener('mouseup', onMouseUp);
     const beforeUnload = (e: BeforeUnloadEvent) => { if (store.get().dirty && store.get().fileName) e.preventDefault(); };
     window.addEventListener('beforeunload', beforeUnload);
-    return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('beforeunload', beforeUnload); };
+    return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('keydown', onKeyCapture, true); window.removeEventListener('mouseup', onMouseUp); window.removeEventListener('beforeunload', beforeUnload); };
   }, []);
 
   /* ---------------------------- drag & drop ----------------------------- */
@@ -207,7 +236,7 @@ export function App() {
             Mathcad-Abgleich <span className={`pill ${ver.mismatch ? 'warn' : 'ok'}`}>{ver.match}/{ver.total} ✓</span>
           </button>
         )}
-        <span className="status-item hide-narrow">{ws.regions.length} Bereiche</span>
+        <span className="status-item hide-narrow">{ws.regions.length} {ws.regions.length === 1 ? "Bereich" : "Bereiche"}</span>
         <div className="spacer" />
         <span className="status-item hide-narrow muted">{ws.settings.decimals} Nachkommastellen · {ws.settings.decimalComma ? 'Komma' : 'Punkt'}</span>
         <span className="zoom">

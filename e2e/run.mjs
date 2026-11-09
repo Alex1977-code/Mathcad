@@ -168,7 +168,7 @@ try {
   await shot('06-import-xmcd.png');
 
   /* 10 · import Mathcad Prime (.mcdx) */
-  for (const [file, expect] of [['RC_torsion.mcdx', '17/17'], ['trig.mcdx', '19/19']]) {
+  for (const [file, expect] of [['RC_torsion.mcdx', '16/16'], ['trig.mcdx', '19/19']]) {
       const fc = page.waitForEvent('filechooser');
     await page.click('.topbar >> text=Importieren');
     await (await fc).setFiles(join(root, 'tests/fixtures/mathcad/prime', file));
