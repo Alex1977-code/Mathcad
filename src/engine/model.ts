@@ -22,6 +22,8 @@ export interface MathRegion extends RegionBase {
   src: string;
   /** Do not evaluate (Mathcad "disable evaluation"). */
   disabled?: boolean;
+  /** Guess value of a solve block (re-evaluated whenever Find runs, e.g. with function arguments). */
+  guess?: boolean;
   /** Data from an imported Mathcad file. */
   imported?: {
     /** Result Mathcad stored in the file (used to verify our calculation). */

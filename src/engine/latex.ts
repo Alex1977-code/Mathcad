@@ -85,7 +85,11 @@ export function toLatex(n: Node, ctx: LatexCtx = {}): string {
     case 'bin': {
       const p = prec(n);
       switch (n.op) {
-        case '/': return `\\frac{${L(stripParen(n.a))}}{${L(stripParen(n.b))}}`;
+        case '/': {
+          // quantities like 18.5 kN/m are written inline, everything else as a fraction
+          if (isUnitish(n.b, ctx) && (isUnitish(n.a, ctx) || isQuantity(n.a, ctx))) return `${L(n.a)}/${wrapUnit(n.b, ctx)}`;
+          return `\\frac{${L(stripParen(n.a))}}{${L(stripParen(n.b))}}`;
+        }
         case '^': {
           const base = n.a.k === 'bin' && n.a.op === '/' ? `\\left(${L(n.a)}\\right)` : wrap(n.a, 9);
           return `{${base}}^{${L(stripParen(n.b))}}`;
@@ -152,6 +156,14 @@ function isNumberish(n: Node): boolean {
   if (n.k === 'un' && n.op === 'neg') return isNumberish(n.a);
   if (n.k === 'bin' && n.op === '/' ) return isNumberish(n.a) && isNumberish(n.b);
   return false;
+}
+
+function isQuantity(n: Node, ctx: LatexCtx): boolean {
+  return n.k === 'bin' && n.op === '*' && isNumberish(n.a) && isUnitish(n.b, ctx);
+}
+function wrapUnit(n: Node, ctx: LatexCtx): string {
+  const s = toLatex(n, ctx);
+  return n.k === 'bin' && (n.op === '*' || n.op === '/') ? `\\left(${s}\\right)` : s;
 }
 
 function isUnitish(n: Node, ctx: LatexCtx): boolean {

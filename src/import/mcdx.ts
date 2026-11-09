@@ -164,7 +164,13 @@ export async function importMcdx(data: ArrayBuffer | Uint8Array, name: string, p
         const inner = child(content, 'regions');
         const subs = inner ? kids(inner).filter(r => local(r) === 'region') : [];
         const firstConstraint = subs.find(r => r.getAttribute('solve-block-category') === 'constraint');
-        for (const s of subs) await handleRegion(s, x, y);
+        for (const s of subs) {
+          const before = regions.length;
+          await handleRegion(s, x, y);
+          if (s.getAttribute('solve-block-category') === 'guess-value') {
+            for (const r of regions.slice(before)) if (r.type === 'math') r.guess = true;
+          }
+        }
         if (firstConstraint) {
           regions.push({ id: newId(), type: 'math', x: x - 6, y: y + parseFloat(firstConstraint.getAttribute('top') ?? '0'), src: 'Given' });
         }
@@ -178,6 +184,18 @@ export async function importMcdx(data: ArrayBuffer | Uint8Array, name: string, p
         break;
       }
       case 'pageBreak': regions.push({ id: newId(), type: 'pagebreak', x: 0, y }); break;
+      case 'spec-table': {
+        // data table: one column vector definition per column, placed side by side
+        let k = 0;
+        for (const m of kids(content)) {
+          if (local(m) !== 'math') continue;
+          const ref = m.getAttribute('resultRef');
+          regions.push(mathRegionFrom(m, x + k * 130, y, ctx, ref ? results.get(ref) : null));
+          k++;
+        }
+        warnings.push(`Datentabelle mit ${k} Spalten als Vektordefinitionen übernommen`);
+        break;
+      }
       case 'Area': case 'area': {
         const inner = child(content, 'regions');
         if (inner) for (const s of kids(inner)) if (local(s) === 'region') await handleRegion(s, x, y);

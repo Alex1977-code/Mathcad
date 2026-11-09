@@ -301,3 +301,17 @@ describe('plots', () => {
 });
 
 void isMatrix; void si; void lastVal; void (null as unknown as Matrix);
+
+describe('example worksheet', () => {
+  it('computes without errors and with the expected key results', async () => {
+    const { exampleWorksheet } = await import('../src/ui/examples');
+    const ws = exampleWorksheet();
+    const r = computeWorksheet(ws);
+    expect(r.errorCount).toBe(0);
+    const texts = Object.values(r.results).map(x => x.resultText).filter(Boolean).join(' | ');
+    expect(texts).toContain('97.703');   // M_Ed in kN·m
+    expect(texts).toContain('18.319');   // σ in MPa
+    expect(texts).toContain('1.92');     // w_max in mm
+    expect(texts).toContain('"erfüllt ✓"');
+  });
+});

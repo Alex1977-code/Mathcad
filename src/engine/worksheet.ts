@@ -16,7 +16,7 @@ import { checkResult, expectedToText, type CheckStatus } from './verify';
 export interface RegionError { message: string; culprit?: string; pos?: number; end?: number; kind: 'parse' | 'calc' }
 
 export interface PlotTraceData { x: number[]; y: number[]; label: string; color?: string; style?: string }
-export interface PlotData { traces: PlotTraceData[]; xLabel: string; yLabel: string; error?: string }
+export interface PlotData { traces: PlotTraceData[]; xLabel: string; yLabel: string; error?: string; xLim: [number | null, number | null]; yLim: [number | null, number | null] }
 
 export interface RegionResult {
   id: string;
@@ -144,6 +144,7 @@ export class WorksheetEngine {
     }
     // Pass 2: everything in order
     let inSolve = false;
+    let pendingGuesses: { name: string; expr: Node }[] = [];
     for (const r of order) {
       if (r.type === 'math') {
         const p = parsed.get(r.id)!;
@@ -156,6 +157,8 @@ export class WorksheetEngine {
         if (p.kind === 'expr' && p.expr.k === 'id' && /^given$/i.test(p.expr.name) && !this.top.get(p.expr.name)) {
           inSolve = true;
           this.ev.constraints = [];
+          this.ev.guesses = pendingGuesses;
+          pendingGuesses = [];
           results[r.id] = { id: r.id, kind: 'expr', latex: '\\textbf{Given}', solve: 'given' };
           continue;
         }
@@ -169,6 +172,11 @@ export class WorksheetEngine {
           continue;
         }
         const res = this.runMath(r, p);
+        if (r.guess && p.kind === 'define' && !p.target.params && !p.target.index && !p.target.multi) {
+          pendingGuesses.push({ name: p.target.name, expr: p.expr });
+          // a guess may depend on arguments of a solver function: not an error at this point
+          if (res.error) { res.error = undefined; res.latex = stmtLatex(p, this.latexCtx(this.top)); }
+        }
         if (inSolve && usesFind(p)) { res.solve = 'find'; inSolve = false; }
         results[r.id] = res;
         if (p.kind === 'define' && !res.error) definedBy.set(p.target.name, r.id);
@@ -231,7 +239,7 @@ export class WorksheetEngine {
             const dup = t.params.find((x, i) => t.params!.indexOf(x) !== i);
             if (dup) throw new CalcError(`Parameter „${dup}“ doppelt`);
             const fn: FnVal = { kind: 'fn', name: t.name, params: t.params, body: p.expr };
-            if (usesFind(p)) fn.constraints = this.ev.constraints.slice();
+            if (usesFind(p)) { fn.constraints = this.ev.constraints.slice(); fn.guesses = this.ev.guesses.slice(); }
             const snap = scope.snapshot();
             fn.scope = snap;
             snap.set(t.name, fn);
@@ -406,22 +414,26 @@ export class WorksheetEngine {
   /* ------------------------------ plots -------------------------------- */
 
   runPlot(r: PlotRegion): PlotData {
-    const out: PlotData = { traces: [], xLabel: '', yLabel: '' };
+    const out: PlotData = { traces: [], xLabel: '', yLabel: '', xLim: [null, null], yLim: [null, null] };
     const scope = this.top;
     const errors: string[] = [];
-    const numOrUndef = (s?: string) => {
-      if (!s || !s.trim()) return undefined;
-      const v = this.ev.eval(parseExpression(s), scope);
-      return isUnit(v) ? (v as Unit).value as number : toNumber(v);
-    };
-    let xmin: number | undefined, xmax: number | undefined;
-    try { xmin = numOrUndef(r.xmin); xmax = numOrUndef(r.xmax); } catch (e) { errors.push((e as Error).message); }
-    const xLabels: string[] = [], yLabels: string[] = [];
     let xUnitVal: Val | undefined, yUnitVal: Val | undefined;
     try {
       if (r.xUnit?.trim()) xUnitVal = this.ev.eval(parseExpression(r.xUnit), scope);
       if (r.yUnit?.trim()) yUnitVal = this.ev.eval(parseExpression(r.yUnit), scope);
     } catch (e) { errors.push('Achseneinheit: ' + (e as Error).message); }
+    /** Axis limit in display units (divided by the axis unit if one is set). */
+    const limit = (s: string | undefined, unit: Val | undefined) => {
+      if (!s || !s.trim()) return undefined;
+      let v = this.ev.eval(parseExpression(s), scope);
+      if (unit !== undefined && (isUnit(v) || isUnit(unit))) v = this.ev.divide(v, unit, false);
+      return isUnit(v) ? (v as Unit).value as number : toNumber(v);
+    };
+    let xmin: number | undefined, xmax: number | undefined;
+    try { xmin = limit(r.xmin, xUnitVal); xmax = limit(r.xmax, xUnitVal); } catch (e) { errors.push('x-Grenzen: ' + (e as Error).message); }
+    try { out.yLim = [limit(r.ymin, yUnitVal) ?? null, limit(r.ymax, yUnitVal) ?? null]; } catch (e) { errors.push('y-Grenzen: ' + (e as Error).message); }
+    out.xLim = [xmin ?? null, xmax ?? null];
+    const xLabels: string[] = [], yLabels: string[] = [];
     const scalar = (v: Val, unit: Val | undefined, dimsOut: { d?: number[] }): number => {
       let x = v;
       if (unit !== undefined) x = this.ev.divide(v, unit, false);

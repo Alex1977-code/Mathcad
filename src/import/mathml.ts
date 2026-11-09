@@ -91,7 +91,7 @@ export function convertExpr(e: Element, ctx: ConvertCtx): Node {
       const name = idName(e);
       const labels = e.getAttribute('labels') ?? '';
       if (labels === 'UNIT' && ctx.definedNames.has(name)) return { k: 'id', name: `'${name}` };
-      if (labels === 'CONSTANT' && !['π', 'e', '∞', 'g', 'c', 'G'].includes(name)) return { k: 'id', name: `'${name}` };
+      if (labels === 'CONSTANT' && !['π', 'e', '∞', 'g'].includes(name)) return { k: 'id', name: `'${name}` };
       if (labels === 'CONSTANT' && ctx.definedNames.has(name)) return name === 'e' ? { k: 'call', name: 'exp', args: [{ k: 'num', v: 1 }] } : { k: 'id', name: `'${name}` };
       return { k: 'id', name };
     }
@@ -204,7 +204,11 @@ function convertApply(e: Element, ctx: ConvertCtx): Node {
     return foldBin(BIN[op], a, op === 'mult' && opEl.getAttribute('style') === 'space');
   }
   switch (op) {
-    case 'scale': return foldBin('*', rest.map(conv), true);
+    case 'scale': {
+      // value with unit; an empty unit placeholder (e.g. in data tables) is dropped
+      const parts = rest.filter(x => local(x) !== 'placeholder').map(conv);
+      return parts.length === 1 ? parts[0] : foldBin('*', parts, true);
+    }
     case 'neg': return { k: 'un', op: 'neg', a: conv(rest[0]) };
     case 'not': return { k: 'un', op: 'not', a: conv(rest[0]) };
     case 'absval': return { k: 'un', op: 'abs', a: conv(rest[0]) };

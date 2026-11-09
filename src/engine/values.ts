@@ -11,6 +11,8 @@ export interface FnVal {
   builtin?: (args: Val[], ctx: unknown) => Val;
   /** Solve-block constraints captured when the function was defined. */
   constraints?: { node: Node }[];
+  /** Solve-block guess definitions captured with the constraints. */
+  guesses?: { name: string; expr: Node }[];
 }
 
 export interface RangeVal {

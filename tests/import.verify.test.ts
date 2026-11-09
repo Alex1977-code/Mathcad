@@ -56,13 +56,13 @@ describe('Mathcad Prime (.mcdx)', () => {
     // files whose functions are fully supported must match completely
     for (const name of ['trig.mcdx', 'hyperbolic.mcdx', 'log-exp.mcdx', 'breaks-sets-logic.mcdx', 'RC_torsion.mcdx', 'range_sum.mcdx',
       'plain_concrete_cohesion.mcdx', 'Constants.mcdx', 'shrinkage.mcdx', 'solve_as_function.mcdx', 'sort.mcdx', 'NM_to_CT.mcdx',
-      'Elastic_foundation_eq_line_spring.mcdx', 'RC_interface.mcdx']) {
+      'Elastic_foundation_eq_line_spring.mcdx', 'RC_interface.mcdx', 'RC_col.mcdx', 'biaxial_bending.mcdx']) {
       const r = reports.find(x => x.file === name)!;
       expect(r, name).toBeDefined();
       expect(`${name}: ${r.match}/${r.total}`).toBe(`${name}: ${r.total}/${r.total}`);
     }
-    // overall: at least 78 % of all stored results reproduced (rest: unsupported special functions, random numbers, external DLLs)
-    expect(m / t).toBeGreaterThan(0.78);
+    // overall: at least 86 % of all stored results reproduced (rest: unsupported special functions, random numbers, external DLLs)
+    expect(m / t).toBeGreaterThan(0.86);
   });
 
   it('additional sample files (optional, MATHCAD_SAMPLES)', { timeout: 600000 }, async () => {

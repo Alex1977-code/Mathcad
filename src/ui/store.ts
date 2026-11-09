@@ -19,6 +19,8 @@ export interface AppState {
   plotEditor: string | null;
   /** Region to scroll into view (set by "jump to"). */
   focusRegion: { id: string; n: number } | null;
+  /** Incremented whenever another document is loaded. */
+  docId: number;
 }
 
 const HISTORY_LIMIT = 200;
@@ -27,7 +29,7 @@ class Store {
   state: AppState = {
     ws: emptyWorksheet(),
     selection: [], editing: null, editOriginal: null, cursor: { x: 48, y: 48 },
-    fileName: null, dirty: false, zoom: 1, showChecks: true, plotEditor: null, focusRegion: null,
+    fileName: null, dirty: false, zoom: 1, showChecks: true, plotEditor: null, focusRegion: null, docId: 0,
   };
   past: Worksheet[] = [];
   future: Worksheet[] = [];
@@ -88,6 +90,7 @@ class Store {
       ws, fileName, dirty: false, selection: [], editing: null, editOriginal: null, plotEditor: null,
       cursor: { x: 48, y: first ? Math.max(...ws.regions.map(r => r.y)) + 60 : 48 },
       showChecks: true,
+      docId: this.state.docId + 1,
     });
   }
 

@@ -78,6 +78,9 @@ function roundTo(x: Val, mult: Val, mode: 'floor' | 'ceil' | 'round'): Val {
 
 function compareVals(a: Val, b: Val): number {
   if (typeof a === 'string' && typeof b === 'string') return a < b ? -1 : a > b ? 1 : 0;
+  // zero is compatible with every unit (Mathcad)
+  if (a === 0 && isUnit(b)) return Math.sign(0 - ((b as Unit).value as number));
+  if (b === 0 && isUnit(a)) return Math.sign(((a as Unit).value as number) - 0);
   return math.compare(a as number, b as number) as number;
 }
 
@@ -177,8 +180,8 @@ export const BUILTINS: Record<string, Builtin> = {
   },
 
   // statistics / aggregation
-  max: (args) => { const e = elements(args); if (!e.length) throw new CalcError('max: keine Werte'); return e.reduce((a, b) => (compareVals(b, a) > 0 ? b : a)); },
-  min: (args) => { const e = elements(args); if (!e.length) throw new CalcError('min: keine Werte'); return e.reduce((a, b) => (compareVals(b, a) < 0 ? b : a)); },
+  max: (args) => { const e = elements(args); if (!e.length) throw new CalcError('max: keine Werte'); return zeroLike(e.reduce((a, b) => (compareVals(b, a) > 0 ? b : a)), e); },
+  min: (args) => { const e = elements(args); if (!e.length) throw new CalcError('min: keine Werte'); return zeroLike(e.reduce((a, b) => (compareVals(b, a) < 0 ? b : a)), e); },
   mean: (args) => { const e = elements(args); if (e.every(x => typeof x === 'number')) return (e as number[]).reduce((a, b) => a + b, 0) / e.length; return math.divide(e.reduce((a, b) => math.add(a as number, b as number) as Val) as number, e.length) as Val; },
   median: (args) => { const e = elements(args).slice().sort(compareVals); const n = e.length; return n % 2 ? e[(n - 1) / 2] : math.divide(math.add(e[n / 2 - 1] as number, e[n / 2] as number), 2) as Val; },
   stdev: (args) => stdev(elements(args), false),
@@ -406,6 +409,15 @@ function valEq(a: Val, b: Val): boolean {
   try { return math.equal(a as number, b as number) as boolean; } catch { return false; }
 }
 
+/** A plain 0 among quantities takes their unit. */
+function zeroLike(v: Val, all: Val[]): Val {
+  if (v !== 0) return v;
+  const u = all.find(x => isUnit(x)) as Unit | undefined;
+  if (!u) return v;
+  const z = u.clone(); (z as unknown as { value: number }).value = 0;
+  return z;
+}
+
 function sortEig(v: Val[]): Val[] {
   const re = (x: Val) => (isComplex(x) ? (x as Complex).re : x as number);
   return v.map(x => (isComplex(x) && Math.abs((x as Complex).im) < 1e-12 ? (x as Complex).re : x)).sort((a, b) => re(b) - re(a));
@@ -558,8 +570,13 @@ function withUnit(t: number, tmpl: Val): Val {
   return t;
 }
 
-function solveBlock(args: Node[], scope: Scope, ev: Evaluator, allowResidual: boolean): Val {
+function solveBlock(args: Node[], outer: Scope, ev: Evaluator, allowResidual: boolean): Val {
   const names = args.map(a => varName(a, 'Find'));
+  // guess values of the block are evaluated here, so they may depend on function arguments
+  const scope = new Scope(outer);
+  for (const g of ev.guesses) {
+    try { scope.set(g.name, ev.eval(g.expr, scope)); } catch { /* keep an outer value if there is one */ }
+  }
   if (!ev.constraints.length) throw new CalcError('Find: keine Bedingungen – „Given“ und Gleichungen davor einfügen');
   const guesses = names.map(n => {
     const g = scope.get(n);
@@ -651,8 +668,6 @@ export const CONSTANTS: Record<string, () => Val> = {
   e: () => Math.E,
   '∞': () => 1e307,
   g: () => math.unit(9.80665, 'm/s^2'),
-  c: () => math.unit(299792458, 'm/s'),
-  G: () => math.unit(6.6743e-11, 'm^3/(kg s^2)'),
   NaN: () => NaN,
   TOL: () => 1e-3,
   CTOL: () => 1e-3,

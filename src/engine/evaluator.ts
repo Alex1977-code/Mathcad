@@ -22,6 +22,8 @@ export class Evaluator {
   inSolver = 0;
   /** Solve block constraints visible to Find/Minerr. */
   constraints: Constraint[] = [];
+  /** Guess definitions of the current solve block (re-evaluated by Find). */
+  guesses: { name: string; expr: Node }[] = [];
   constructor(public opts: EvalOptions = { origin: 0 }) {}
 
   /* --------------------------- lookup ---------------------------- */
@@ -141,8 +143,14 @@ export class Evaluator {
       switch (op) {
         case '+':
           if (typeof a === 'string' || typeof b === 'string') throw new CalcError('Zeichenketten mit concat() verbinden');
+          // 0 is compatible with every unit (Mathcad)
+          if (a === 0 && isUnit(b)) return b;
+          if (b === 0 && isUnit(a)) return a;
           return this.simplify(math.add(a as number, b as number) as Val);
-        case '-': return this.simplify(math.subtract(a as number, b as number) as Val);
+        case '-':
+          if (b === 0 && isUnit(a)) return a;
+          if (a === 0 && isUnit(b)) return math.unaryMinus(b as Unit) as Val;
+          return this.simplify(math.subtract(a as number, b as number) as Val);
         case '*': return this.multiply(a, b, vec);
         case '/': return this.divide(a, b, vec);
         case '^': return this.power(a, b, vec);
@@ -281,7 +289,7 @@ export class Evaluator {
           return math.abs(a as number) as Val;
         }
         case 'sqrt': {
-          if (isMatrix(a) && !vec) return math.map(a as Matrix, (x: number) => math.sqrt(x)) as Matrix;
+          if (isMatrix(a)) return math.map(a as Matrix, (x: number) => (typeof x === 'number' && x >= 0 ? Math.sqrt(x) : math.sqrt(x))) as Matrix;
           if (typeof a === 'number' && a >= 0) return Math.sqrt(a);
           return this.simplify(math.sqrt(a as number) as Val);
         }
@@ -412,13 +420,15 @@ export class Evaluator {
     const local = new Scope(f.scope);
     f.params.forEach((p, i) => local.set(p, args[i]));
     this.depth++;
-    const saved = this.constraints;
+    const saved = this.constraints, savedG = this.guesses;
     if (f.constraints) this.constraints = f.constraints;
+    if (f.guesses) this.guesses = f.guesses;
     try {
       return this.eval(f.body!, local, false);
     } finally {
       this.depth--;
       this.constraints = saved;
+      this.guesses = savedG;
     }
   }
 
