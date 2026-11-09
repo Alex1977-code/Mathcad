@@ -334,3 +334,30 @@ describe('matrix ownership', () => {
     expect(last(['i := 0..4', 'v[i] := i', 'w := v', 'w[2] := 99', 'v ='])).toBe('[0; 1; 2; 3; 4]');
   });
 });
+
+describe('Befunde der Testagenten: Matrizen', () => {
+  it('rekursive Folgen über Bereiche (Element für Element)', () => {
+    expect(last(['x[0] := 1', 'i := 1..5', 'x[i] := x[i - 1]*2', 'x ='])).toBe('[1; 2; 4; 8; 16; 32]');
+    expect(last(['F[0] := 0', 'F[1] := 1', 'k := 2..7', 'F[k] := F[k - 1] + F[k - 2]', 'F[7] ='])).toBe('13');
+    expect(last(['v := [0; 1; 2]', 'i := 0..2', 'v[i] := v[2 - i]', 'v ='])).toBe('[2; 1; 2]');
+  });
+  it('in Matrizen gespeicherte Vektoren ändern sich nicht nachträglich', () => {
+    expect(last(['f(n) :=\n  v[0] ← 1\n  v[1] ← 2\n  for i ∈ 0..2\n    R[i] ← v\n    v[0] ← v[0] + 10\n  R', 'f(0)[0] ='])).toBe('[1; 2]');
+    expect(last(['g(n) :=\n  v[0] ← 1\n  v[1] ← 2\n  w ← [v, v]\n  v[1] ← 99\n  w', 'g(0)[0, 0] ='])).toBe('[1; 2]');
+  });
+  it('diag, lsolve mit Einheiten, polyroots/eigenvals mit komplexen Wurzeln', () => {
+    expect(last(['diag([1; 2; 3]) ='])).toBe('[1, 0, 0; 0, 2, 0; 0, 0, 3]');
+    expect(last(['K := [2, -1, 0; -1, 2, -1; 0, -1, 1]*kN/m', 'F := [0; 0; 1]*kN', 'lsolve(K, F) = mm'])).toBe('[1000; 2000; 3000]');
+    expect(last(['polyroots([-1; 0; 0; 1]) ='])).toBe('[-0.5 - 0.866i; -0.5 + 0.866i; 1]');
+    expect(last(['eigenvals([0, 0, 1; 1, 0, 0; 0, 1, 0]) ='])).toContain('-0.5 + 0.866i');
+  });
+  it('Fehler statt stiller elementweiser Rechnung bei nicht-quadratischen Matrizen', () => {
+    expect(last(['A := [1, 2, 3; 4, 5, 6]', 'A^2 ='])).toMatch(/ERROR: .*quadratisch/);
+    expect(last(['M[-1] := [1; 2]', 'M ='])).toMatch(/ERROR/);
+    expect(run(['M[-1] := [1; 2]'])[0].error?.message).toMatch(/Index kleiner als ORIGIN/);
+  });
+  it('Zeilenvektor: Betrag und Skalarprodukt', () => {
+    expect(last(['v := [3; 4]', '|v^T| ='])).toBe('5');
+    expect(last(['v := [1; 2]', 'v^T*v + 1 ='])).toBe('6');
+  });
+});

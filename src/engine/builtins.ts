@@ -208,7 +208,10 @@ export const BUILTINS: Record<string, Builtin> = {
   diag: (args) => {
     nargs('diag', args, 1);
     const m = asMatrix(args[0]); const [r, c] = m.size();
-    if (c === 1 || r === 1) { const e = m.toArray().flat() as Val[]; return math.diag(e as number[]) as Matrix; }
+    if (c === 1 || r === 1) {
+      const e = m.toArray().flat() as Val[];
+      return makeMatrix(e.map((x, i) => e.map((_, j) => (i === j ? x : 0))));
+    }
     return column((math.diag(m) as Matrix).toArray() as Val[]);
   },
   tr: (args) => { nargs('tr', args, 1); return math.trace(asMatrix(args[0])) as Val; },
@@ -237,8 +240,23 @@ export const BUILTINS: Record<string, Builtin> = {
     if (ir < 0 || ic < 0 || jr >= m.length || jc >= m[0].length || jr < ir || jc < ic) throw new CalcError('submatrix: Indizes außerhalb des Bereichs');
     return makeMatrix(m.slice(ir, jr + 1).map(r => r.slice(ic, jc + 1)));
   },
-  lsolve: (args) => { nargs('lsolve', args, 2); return math.lusolve(asMatrix(args[0]), asMatrix(args[1])) as Matrix; },
-  eigenvals: (args) => { nargs('eigenvals', args, 1); const r = math.eigs(asMatrix(args[0])); return column(sortEig(toArr(r.values))); },
+  lsolve: (args, ev) => {
+    nargs('lsolve', args, 2);
+    const A = asMatrix(args[0]), b = asMatrix(args[1]);
+    if (!ev.isSquare(A)) throw new CalcError('lsolve: Koeffizientenmatrix muss quadratisch sein');
+    if (A.size()[0] !== b.size()[0]) throw new CalcError('lsolve: Zeilenzahl von Matrix und rechter Seite passt nicht');
+    const hasUnits = [A, b].some(m => (m.valueOf() as unknown as Val[][]).some(r => (Array.isArray(r) ? r : [r]).some(x => isUnit(x))));
+    if (hasUnits) return ev.multiply(ev.power(A, -1, false), b, false);
+    return math.lusolve(A, b) as Matrix;
+  },
+  eigenvals: (args) => {
+    nargs('eigenvals', args, 1);
+    const M = asMatrix(args[0]);
+    try { return column(sortEig(toArr(math.eigs(M).values))); } catch {
+      // fallback for matrices where the QR iteration does not converge: roots of the characteristic polynomial
+      return column(sortEig(polyRoots(charPoly(matrixRows(M).map(r => r.map(x => toNumber(x)))))));
+    }
+  },
   eigenvec: (args) => {
     nargs('eigenvec', args, 2);
     const r = math.eigs(asMatrix(args[0]));
@@ -356,9 +374,10 @@ export const BUILTINS: Record<string, Builtin> = {
     const n = c.length - 1;
     if (n < 1) throw new CalcError('polyroots: Polynom vom Grad ≥ 1 erwartet');
     if (n === 1) return column([-c[0] / c[1]]);
-    const comp = Array.from({ length: n }, (_, i) => Array.from({ length: n }, (_, j) => (j === n - 1 ? -c[i] / c[n] : (i === j + 1 ? 1 : 0))));
-    const vals = toArr(math.eigs(comp).values).map(v => (isComplex(v) && Math.abs((v as Complex).im) < 1e-10 ? (v as Complex).re : v));
-    vals.sort((a, b) => (isComplex(a) ? (a as Complex).re : (a as number)) - (isComplex(b) ? (b as Complex).re : (b as number)));
+    const vals = polyRoots(c);
+    const re = (v: Val) => (isComplex(v) ? (v as Complex).re : (v as number));
+    const im = (v: Val) => (isComplex(v) ? (v as Complex).im : 0);
+    vals.sort((a, b) => re(a) - re(b) || im(a) - im(b));
     return column(vals);
   },
 
@@ -426,6 +445,52 @@ function zeroLike(v: Val, all: Val[]): Val {
 function divQ(s: unknown, n: number): Val {
   if (typeof s === 'number') return s / n;
   return withValue(s as Unit, ((s as unknown as { value: number }).value) / n);
+}
+
+/** Roots of a real polynomial (coefficients in ascending order): Durand–Kerner with Newton polishing. */
+function polyRoots(coef: number[]): Val[] {
+  const c = coef.slice();
+  while (c.length > 1 && c[c.length - 1] === 0) c.pop();
+  const n = c.length - 1;
+  if (n < 1) return [];
+  const a = c.map(x => x / c[n]);                      // monic
+  type C = [number, number];
+  const mul = (x: C, y: C): C => [x[0] * y[0] - x[1] * y[1], x[0] * y[1] + x[1] * y[0]];
+  const div = (x: C, y: C): C => { const d = y[0] * y[0] + y[1] * y[1]; return [(x[0] * y[0] + x[1] * y[1]) / d, (x[1] * y[0] - x[0] * y[1]) / d]; };
+  const evalP = (z: C, cs: number[]): C => { let r: C = [cs[cs.length - 1], 0]; for (let k = cs.length - 2; k >= 0; k--) r = [mul(r, z)[0] + cs[k], mul(r, z)[1]]; return r; };
+  const dcs = a.slice(1).map((x, k) => x * (k + 1));
+  const R = 1 + Math.max(...a.slice(0, n).map(Math.abs));
+  let z: C[] = Array.from({ length: n }, (_, k) => { const t = 2 * Math.PI * k / n + 0.4; return [R * 0.9 * Math.cos(t), R * 0.9 * Math.sin(t)]; });
+  for (let it = 0; it < 500; it++) {
+    let delta = 0;
+    z = z.map((zi, i) => {
+      let den: C = [1, 0];
+      z.forEach((zj, j) => { if (j !== i) den = mul(den, [zi[0] - zj[0], zi[1] - zj[1]]); });
+      const step = div(evalP(zi, a), den);
+      delta = Math.max(delta, Math.hypot(step[0], step[1]));
+      return [zi[0] - step[0], zi[1] - step[1]];
+    });
+    if (delta < 1e-15 * R) break;
+  }
+  // Newton polishing on the original polynomial
+  z = z.map(zi => { for (let k = 0; k < 3; k++) { const d = evalP(zi, dcs); if (Math.hypot(d[0], d[1]) === 0) break; const s = div(evalP(zi, a), d); zi = [zi[0] - s[0], zi[1] - s[1]]; } return zi; });
+  return z.map(([re, im]) => (Math.abs(im) <= 1e-10 * Math.max(1, Math.abs(re)) ? re : math.complex(re, im) as unknown as Val));
+}
+
+/** Characteristic polynomial (ascending coefficients) via Faddeev–LeVerrier. */
+function charPoly(A: number[][]): number[] {
+  const n = A.length;
+  const cs = new Array(n + 1).fill(0);
+  cs[n] = 1;
+  let M = A.map(r => r.map(() => 0));
+  for (let k = 1; k <= n; k++) {
+    const AM = A.map((r, i) => r.map((_, j) => r.reduce((s, x, t) => s + x * M[t][j], 0)));
+    for (let i = 0; i < n; i++) AM[i][i] += cs[n - k + 1];
+    M = AM;
+    const AMk = A.map((r, i) => r.map((_, j) => r.reduce((s, x, t) => s + x * M[t][j], 0)));
+    cs[n - k] = -AMk.reduce((s, r, i) => s + r[i], 0) / k;
+  }
+  return cs;
 }
 
 function sortEig(v: Val[]): Val[] {

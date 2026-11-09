@@ -90,6 +90,8 @@ export class Evaluator {
         if (rows.length === 1 && rows[0].length === 1 && isMatrix(rows[0][0])) return rows[0][0];
         for (const r of rows) for (const c of r) {
           if (isFn(c) || isRange(c)) throw new CalcError('Ungültiges Matrixelement');
+          // a matrix stored inside another one is shared: it must never be modified in place again
+          if (isMatrix(c)) this.owned.delete(c as object);
         }
         return makeMatrix(rows);
       }
@@ -209,16 +211,17 @@ export class Evaluator {
       if (sa[1] !== sb[0]) throw new CalcError(`Matrixdimensionen passen nicht: ${sa.join('×')} · ${sb.join('×')}`);
       if (rowsOf(A).some(r => r.some(x => isUnit(x))) || rowsOf(B).some(r => r.some(x => isUnit(x)))) return this.matmul(A, B);
     } else if (isMatrix(a) || isMatrix(b)) return this.ew('*', a, b);
-    return this.simplify(math.multiply(a as number, b as number) as Val);
+    const prod = math.multiply(a as number, b as number) as Val;
+    // row · column gives a scalar (as with quantities)
+    if (isMatrix(prod) && (prod as Matrix).size().every(d => d === 1)) return this.simplify(rowsOf(prod as Matrix)[0][0]);
+    return this.simplify(prod);
   }
 
   divide(a: Val, b: Val, vec: boolean): Val {
     if (typeof a === 'number' && typeof b === 'number' && b !== 0) return a / b;
     if (isUnit(a) || isUnit(b)) { const r = qBinary('/', a, b); if (r !== undefined) return r as Val; }
     if (typeof a === 'string' || typeof b === 'string') throw new CalcError('Zeichenketten können nicht dividiert werden');
-    if (isMatrix(b) && (vec || isMatrix(a))) {
-      if (vec || !this.isSquare(b as Matrix)) return this.ew('/', a, b);
-    }
+    if (isMatrix(b) && vec) return this.ew('/', a, b);
     if (isMatrix(a) && !isMatrix(b)) return this.ew('/', a, b);
     if (isMatrix(b) && !this.isSquare(b as Matrix)) throw new CalcError('Division durch eine nicht-quadratische Matrix');
     const r = math.divide(a as number, b as number) as Val;
@@ -266,7 +269,8 @@ export class Evaluator {
       throw new CalcError('Exponent darf keine Matrix sein');
     }
     if (isMatrix(a)) {
-      if (vec || !this.isSquare(a as Matrix)) return this.ew('^', a, b);
+      if (vec) return this.ew('^', a, b);
+      if (!this.isSquare(a as Matrix)) throw new CalcError('Potenz einer Matrix: Matrix muss quadratisch sein (elementweise mit vec(…))');
       const n = toNumber(b, 'Matrixexponent');
       if (!Number.isInteger(n)) throw new CalcError('Matrixexponent muss ganzzahlig sein');
       let M = a as Matrix;
@@ -340,7 +344,11 @@ export class Evaluator {
           if (isMatrix(a)) {
             const m = a as Matrix;
             const s = m.size();
-            if (s[1] === 1 || s[0] === 1) return this.simplify(math.sqrt(math.dot(m, m) as number) as Val);
+            if (s[1] === 1 || s[0] === 1) {
+              let acc: Val = 0;
+              for (const x of rowsOf(m).flat()) acc = this.binary('+', acc, this.binary('*', x, x));
+              return this.power(acc, 0.5, false);
+            }
             if (s[0] === s[1]) return this.simplify(math.det(m) as Val);
             throw new CalcError('|M| ist nur für Vektoren und quadratische Matrizen definiert');
           }
@@ -423,7 +431,9 @@ export class Evaluator {
         return m;
       }
     }
+    if (idx.some(i => i < 0)) throw new CalcError(`Index kleiner als ORIGIN (${this.opts.origin})`);
     if (isMatrix(value) || (base !== undefined && isMatrix(base) && hasNested(base as Matrix))) {
+      if (isMatrix(value)) this.owned.delete(value as object);
       // nested array: rebuild from rows
       const rows: Val[][] = base !== undefined && isMatrix(base) ? matrixRows(base as Matrix).map(r => r.slice()) : (base !== undefined && !isFn(base) && !isRange(base) && typeof base !== 'string' ? [[base]] : [[0]]);
       const c0 = rows[0].length;
@@ -736,6 +746,9 @@ const ERROR_MAP: [RegExp, string][] = [
   [/Too many arguments/i, 'Zu viele Argumente'],
   [/Cannot convert/i, 'Umrechnung nicht möglich'],
   [/Parameter .* must be a unitless/i, 'Argument muss einheitenlos sein'],
+  [/singular|Linear system cannot be solved/i, 'Matrix ist singulär – Gleichungssystem nicht eindeutig lösbar'],
+  [/Expected a column vector/i, 'Vektor (Spalte) erwartet'],
+  [/failed to converge/i, 'Berechnung konvergiert nicht'],
   [/Unit in function .* is no angle/i, 'Argument muss einheitenlos sein'],
 ];
 

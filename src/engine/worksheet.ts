@@ -301,6 +301,8 @@ export class WorksheetEngine {
             for (const c of combos) {
               local.vars.clear();
               for (const [k, v] of c) local.set(k, v);
+              // Mathcad assigns element by element: later elements see the earlier ones (x[i] := x[i-1]*2)
+              if (cur !== undefined && !c.has(t.name)) local.set(t.name, cur);
               const value = this.ev.eval(p.expr, local);
               const idx = t.index.map(i => this.ev.eval(i, local));
               cur = this.ev.indexSet(cur, idx, value, !first);
