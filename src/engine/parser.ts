@@ -17,8 +17,8 @@ const OPS = [
   '<', '>', '=', '√', '∛', '∜', 'ᵀ', '¬', '∧', '∨', '⊕', '∈', '?', '\'', '∑', '∏', '∫',
 ];
 
-const ID_START = /[\p{L}_°∞ℏ]/u;
-const ID_CHAR = /[\p{L}\p{N}_°'∞ℏ]/u;
+const ID_START = /[\p{L}_°∞ℏ‰]/u;
+const ID_CHAR = /[\p{L}\p{N}_°'∞ℏ‰]/u;
 
 export function tokenize(src: string): Token[] {
   const out: Token[] = [];
@@ -78,8 +78,12 @@ export function tokenize(src: string): Token[] {
       space = false;
       continue;
     }
-    const op = OPS.find(o => src.startsWith(o, i));
+    let op = OPS.find(o => src.startsWith(o, i));
     if (!op) throw new ParseError(`Unerwartetes Zeichen „${c}“`, i);
+    // "x<-1" is a comparison; the arrow needs a following blank:  a <- 5
+    if (op === '<-' && !/\s/.test(src[i + 2] ?? '')) op = '<';
+    // "5!=" / "A<<1>>=" at the end: factorial / column operator followed by the evaluation sign
+    if ((op === '!=' || op === '>=') && src.slice(i + 2).trim() === '') op = op[0];
     i += op.length;
     let v = op;
     if (v === '−') v = '-';
@@ -209,6 +213,10 @@ class Parser {
   /** Can the next token start an operand that is implicitly multiplied? */
   startsImplicitOperand() {
     const t = this.peek();
+    const prev = this.toks[this.i - 1];
+    if ((t.t === 'num' || t.t === 'imag') && prev && (prev.t === 'num' || prev.t === 'imag')) {
+      throw new ParseError('Zwei Zahlen ohne Rechenzeichen dazwischen', t.pos, t.end);
+    }
     if (t.t === 'id') return !['and', 'or', 'xor', 'not'].includes(t.v);
     if (t.t === 'num' || t.t === 'imag') return true;
     if (t.t === 'op' && (t.v === '(' || t.v === '√' || t.v === '∛' || t.v === '∜')) return true;
@@ -227,7 +235,8 @@ class Parser {
       const t = this.peek();
       if (t.t === 'id' && t.v === 'T' && !this.isCallOrIndexAt(1)) {
         this.next();
-        return this.parsePostfixOps({ k: 'un', op: 'transpose', a: base });
+        // written as x^T: if T is a variable and x no matrix, the evaluator computes the power
+        return this.parsePostfixOps({ k: 'un', op: 'transpose', a: base, caret: true });
       }
       let exp: Node;
       if (this.eat('-')) exp = { k: 'un', op: 'neg', a: this.parsePowOperand() };
@@ -457,9 +466,31 @@ function parseTarget(src: string): DefTarget {
   return target;
 }
 
+const RESERVED = new Set(['and', 'or', 'xor', 'not', 'if', 'else', 'for', 'while', 'return', 'break', 'continue', 'otherwise']);
+
+function at<T>(offset: number, fn: () => T): T {
+  try { return fn(); } catch (e) {
+    if (e instanceof ParseError) throw new ParseError(e.message, e.pos + offset, e.end + offset);
+    throw e;
+  }
+}
+
+/** Unit placeholder after "=": "%" alone is allowed as display unit. */
+function parseUnit(src: string): Node {
+  if (src.trim() === '%') return { k: 'id', name: '%' };
+  return parseExpression(src, false);
+}
+
 /** Parse the content of a math region (may span several lines for programs). */
 export function parseMathRegion(src: string): MathStmt {
   const text = src.replace(/\r/g, '');
+  const lines0 = text.split('\n');
+  const fi = lines0.findIndex(l => l.trim() !== '');
+  const headOffset = fi > 0 ? lines0.slice(0, fi).join('\n').length + 1 : 0;
+  return at(headOffset, () => parseMathRegionInner(text));
+}
+
+function parseMathRegionInner(text: string): MathStmt {
   if (!text.trim()) return { kind: 'empty' };
   const lines = text.split('\n');
   const firstIdx = lines.findIndex(l => l.trim() !== '');
@@ -473,12 +504,15 @@ export function parseMathRegion(src: string): MathStmt {
     const global = toks[defIdx].v === '≡';
     const lhsSrc = head.slice(0, toks[defIdx].pos);
     const target = parseTarget(lhsSrc);
+    for (const n of [target.name, ...(target.params ?? [])]) {
+      if (RESERVED.has(n)) throw new ParseError(`„${n}“ ist ein reserviertes Wort und kann nicht definiert werden`, 0, lhsSrc.length);
+    }
     let rhsSrc = head.slice(toks[defIdx].end);
     if (hasBody) {
       if (rhsSrc.trim() !== '' && rhsSrc.trim() !== '{') {
         throw new ParseError('Für ein Programm muss die erste Zeile nach „:=“ enden', toks[defIdx].end);
       }
-      const offset = text.indexOf(head) + head.length + 1;
+      const offset = head.length + 1;
       const body = parseProgramLines(rest, offset);
       return { kind: 'define', target, global, expr: { k: 'program', body } };
     }
@@ -489,7 +523,8 @@ export function parseMathRegion(src: string): MathStmt {
     if (eqIdx >= 0) {
       const unitSrc = rhsSrc.slice(rhsToks[eqIdx].end);
       show = {};
-      if (unitSrc.trim()) show.unit = shift(parseExpression(unitSrc, false));
+      const uoff = toks[defIdx].end + rhsToks[eqIdx].end;
+      if (unitSrc.trim()) show.unit = at(uoff, () => parseUnit(unitSrc));
       rhsSrc = rhsSrc.slice(0, rhsToks[eqIdx].pos);
     }
     const base = toks[defIdx].end;
@@ -507,13 +542,12 @@ export function parseMathRegion(src: string): MathStmt {
   if (eqIdx >= 0) {
     const expr = parseExpression(head.slice(0, toks[eqIdx].pos), true);
     const unitSrc = head.slice(toks[eqIdx].end);
-    const unit = unitSrc.trim() ? parseExpression(unitSrc, false) : undefined;
+    const unit = unitSrc.trim() ? at(toks[eqIdx].end, () => parseUnit(unitSrc)) : undefined;
     return { kind: 'eval', expr, unit };
   }
   return { kind: 'expr', expr: parseExpression(head, true) };
 }
 
-function shift(n: Node): Node { return n; }
 
 /* ------------------------------------------------------------------ */
 /* Programs (indentation based)                                        */
@@ -551,7 +585,8 @@ function parseBlock(ls: Line[], i: number, indent: number): [Stmt[], number] {
     const line = ls[i];
     if (line.indent > indent) throw new ParseError('Unerwartete Einrückung', line.pos);
     const text = line.text;
-    const kw = /^(\S+)/.exec(text)![1];
+    // keyword: leading letters, so that "if(x > 0)" is recognised as well
+    const kw = (/^([\p{L}]+)/u.exec(text) ?? /^(\S+)/.exec(text))![1];
     const childIndent = () => (i + 1 < ls.length && ls[i + 1].indent > indent ? ls[i + 1].indent : -1);
     const body = (): Stmt[] => {
       const ci = childIndent();
@@ -620,7 +655,7 @@ function parseBlock(ls: Line[], i: number, indent: number): [Stmt[], number] {
     if (text === 'break') { out.push({ k: 'break' }); i++; continue; }
     if (text === 'continue') { out.push({ k: 'continue' }); i++; continue; }
     if (/^(else|otherwise|elseif|else\s+if)\b/.test(text)) throw new ParseError('„else“ ohne passendes „if“', line.pos);
-    const am = /^(.+?)\s*(←|<-|:=)\s*(.+)$/.exec(text);
+    const am = /^(.+?)\s*(←|<-(?=\s)|:=)\s*(.+)$/.exec(text);
     if (am) {
       const target = wrapErr(line, 0, () => parseExpression(am[1], false));
       if (target.k !== 'id' && target.k !== 'index' && target.k !== 'col') throw new ParseError('Zuweisung nur an Namen oder Elemente', line.pos);

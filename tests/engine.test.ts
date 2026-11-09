@@ -361,3 +361,42 @@ describe('Befunde der Testagenten: Matrizen', () => {
     expect(last(['v := [1; 2]', 'v^T*v + 1 ='])).toBe('6');
   });
 });
+
+describe('Befunde der Testagenten: Parser & Format', () => {
+  it('kleine Größen mit Einheit werden nicht zu 0', () => {
+    expect(last(["'h ="])).toBe('6.626·10^-34 J·s');
+    expect(last(['a := 0', 'a = m'])).toBe('0');
+  });
+  it('x^T ist Potenz, wenn T eine Variable und x keine Matrix ist', () => {
+    expect(last(['T := 3', 'x := 2', 'x^T ='])).toBe('8');
+    expect(last(['T := 3', 'A := [1, 2; 3, 4]', 'A^T ='])).toBe('[1, 3; 2, 4]');
+  });
+  it('Vergleiche: Zeichenketten und Toleranz', () => {
+    expect(last(['"a" == "b" ='])).toBe('0');
+    expect(last(['"a" == "a" ='])).toBe('1');
+    expect(last(['0.1 + 0.2 > 0.3 ='])).toBe('0');
+    expect(last(['y := 2', 'y<-1 ='])).toBe('0');
+  });
+  it('Division durch null ist ein Fehler', () => {
+    expect(last(['1/0 ='])).toMatch(/Division durch null/);
+    expect(last(['0^-1 ='])).toMatch(/Division durch null/);
+    expect(last(['1 m/0 ='])).toMatch(/Division durch null/);
+  });
+  it('Eingabefehler werden erkannt', () => {
+    expect(last(['1 000 ='])).toMatch(/Zwei Zahlen/);
+    expect(last(['not := 1'])).toMatch(/reserviert/);
+    expect(last(['5!='])).toBe('120');
+  });
+  it('Rundung arbeitet dezimal', () => {
+    expect(last(['1.0005 ='])).toBe('1.001');
+    expect(last(['-1.0005 ='])).toBe('-1.001');
+    expect(last(['9999999.9996 ='])).toBe('1·10^7');
+  });
+  it('Fehlerposition im Einheitenteil und nach Leerzeile', () => {
+    expect(() => parseMathRegion('x = m^')).toThrow();
+    try { parseMathRegion('\n1 +* 2'); } catch (e) { expect((e as { pos: number }).pos).toBeGreaterThanOrEqual(1); }
+  });
+  it('Programmschlüsselwort direkt mit Klammer', () => {
+    expect(last(['f(y) :=\n  if(y>0)\n    1\n  else\n    2', 'f(3) ='])).toBe('1');
+  });
+});

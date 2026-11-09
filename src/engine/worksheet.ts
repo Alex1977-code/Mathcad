@@ -428,6 +428,8 @@ export class WorksheetEngine {
     }
     const uv = this.ev.eval(unitNode, scope);
     if (isFn(uv) || isRange(uv) || typeof uv === 'string' || isMatrix(uv)) throw new CalcError('Ungültige Anzeigeeinheit');
+    // 0 is compatible with every unit
+    if (v === 0) { this.lastConverted = 0; return formatValue(0, this.fmt); }
     const ratio = isMatrix(v) ? math.map(v as Matrix, (x: unknown) => this.ev.divide(x as Val, uv, false) as never) as Matrix : this.ev.divide(v, uv, false);
     this.lastConverted = ratio;
     return formatValue(ratio, this.fmt);

@@ -64,7 +64,17 @@ export class Evaluator {
       case 'paren': return this.eval(n.a, scope, vec);
       case 'placeholder': throw new CalcError('Platzhalter ist leer');
       case 'bin': return this.evalBin(n, scope, vec);
-      case 'un': return this.evalUn(n.op, n.a, scope, vec);
+      case 'un':
+        if (n.op === 'transpose' && n.caret) {
+          // "x^T": transpose for matrices, otherwise the power with a variable T
+          const a = this.eval(n.a, scope, vec);
+          if (isMatrix(a)) return math.transpose(a as Matrix);
+          let T: Val | undefined;
+          try { T = this.lookup('T', scope); } catch { T = undefined; }
+          if (T !== undefined && !isFn(T)) return this.power(a, T, vec);
+          return a;
+        }
+        return this.evalUn(n.op, n.a, scope, vec);
       case 'nroot': {
         const deg = toNumber(this.eval(n.n, scope, vec), 'Wurzelexponent');
         const a = this.eval(n.a, scope, vec);
@@ -132,10 +142,13 @@ export class Evaluator {
         case '+': return a + b;
         case '-': return a - b;
         case '*': return a * b;
-        case '/': if (b !== 0) return a / b; break;
-        case '^': if (a >= 0 || Number.isInteger(b)) return Math.pow(a, b); break;
-        case '<': return a < b ? 1 : 0;
-        case '>': return a > b ? 1 : 0;
+        case '/': if (b !== 0) return a / b; throw new CalcError('Division durch null');
+        case '^':
+          if (a === 0 && b < 0) throw new CalcError('Division durch null');
+          if (a >= 0 || Number.isInteger(b)) return Math.pow(a, b);
+          break;
+        case '<': return a < b && !(Math.abs(a - b) <= 1e-12 * Math.max(Math.abs(a), Math.abs(b))) ? 1 : 0;
+        case '>': return a > b && !(Math.abs(a - b) <= 1e-12 * Math.max(Math.abs(a), Math.abs(b))) ? 1 : 0;
         case '<=': return a <= b || Math.abs(a - b) <= 1e-12 * Math.max(Math.abs(a), Math.abs(b)) ? 1 : 0;
         case '>=': return a >= b || Math.abs(a - b) <= 1e-12 * Math.max(Math.abs(a), Math.abs(b)) ? 1 : 0;
         case '==': return a === b || Math.abs(a - b) <= 1e-12 * Math.max(Math.abs(a), Math.abs(b)) ? 1 : 0;
@@ -182,7 +195,21 @@ export class Evaluator {
   }
 
   compare(a: Val, b: Val, f: (x: never, y: never) => boolean, vec: boolean, op = ''): Val {
-    if (typeof a === 'string' && typeof b === 'string') return f(a as never, b as never) ? 1 : 0;
+    if (typeof a === 'string' && typeof b === 'string') {
+      switch (op) {
+        case '==': return a === b ? 1 : 0;
+        case '!=': return a !== b ? 1 : 0;
+        case '<': return a < b ? 1 : 0;
+        case '>': return a > b ? 1 : 0;
+        case '<=': return a <= b ? 1 : 0;
+        case '>=': return a >= b ? 1 : 0;
+      }
+    }
+    if (typeof a === 'string' || typeof b === 'string') {
+      if (op === '==') return 0;
+      if (op === '!=') return 1;
+      throw new CalcError('Zeichenkette und Zahl können nicht verglichen werden');
+    }
     if (isMatrix(a) || isMatrix(b)) {
       if (!vec && isMatrix(a) && isMatrix(b) && (op === '==' || op === '!=')) {
         const eq = math.deepEqual(a as Matrix, b as Matrix) as unknown as boolean;
@@ -219,6 +246,7 @@ export class Evaluator {
 
   divide(a: Val, b: Val, vec: boolean): Val {
     if (typeof a === 'number' && typeof b === 'number' && b !== 0) return a / b;
+    if (b === 0 || (isUnit(b) && (b as Unit).value === 0)) throw new CalcError('Division durch null');
     if (isUnit(a) || isUnit(b)) { const r = qBinary('/', a, b); if (r !== undefined) return r as Val; }
     if (typeof a === 'string' || typeof b === 'string') throw new CalcError('Zeichenketten können nicht dividiert werden');
     if (isMatrix(b) && vec) return this.ew('/', a, b);

@@ -17,7 +17,7 @@ export type Node =
   | { k: 'str'; v: string }
   | { k: 'id'; name: string }
   | { k: 'bin'; op: BinOp; a: Node; b: Node; implicit?: boolean }
-  | { k: 'un'; op: UnOp; a: Node }
+  | { k: 'un'; op: UnOp; a: Node; caret?: boolean }
   | { k: 'nroot'; n: Node; a: Node }
   | { k: 'call'; name: string; args: Node[] }
   | { k: 'index'; a: Node; idx: Node[] }

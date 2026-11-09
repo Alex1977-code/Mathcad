@@ -10,6 +10,8 @@ export interface FormatOptions {
   maxMatrix: number;
   /** Decimal comma instead of point. */
   decimalComma?: boolean;
+  /** Internal: values with units are never shown as 0 because of the zero threshold. */
+  keepTiny?: boolean;
 }
 
 export const DEFAULT_FORMAT: FormatOptions = { decimals: 3, expThreshold: 7, maxMatrix: 12 };
@@ -29,17 +31,29 @@ export function formatReal(x: number, o: FormatOptions = DEFAULT_FORMAT): Format
   return { latex: f.latex.replace(/(\d)\.(\d)/g, '$1{,}$2'), text: f.text.replace(/(\d)\.(\d)/g, '$1,$2') };
 }
 
+/** Decimal rounding (half away from zero) on the shortest decimal representation. */
+function toFixedDec(x: number, dec: number): string {
+  const [m, e] = Math.abs(x).toExponential(14).split('e');
+  const r = Math.round(Number(`${m}e${Number(e) + dec}`));
+  const v = Number(`${r}e-${dec}`);
+  return (x < 0 && v !== 0 ? '-' : '') + v.toFixed(dec);
+}
+
 function formatRealDot(x: number, o: FormatOptions): Formatted {
   if (Number.isNaN(x)) return { latex: '\\mathrm{NaN}', text: 'NaN' };
   if (!isFinite(x) || Math.abs(x) >= 1e307) return { latex: x < 0 ? '-\\infty' : '\\infty', text: x < 0 ? '-∞' : '∞' };
-  if (x === 0 || Math.abs(x) < 1e-15) return { latex: '0', text: '0' };
+  if (x === 0 || (!o.keepTiny && Math.abs(x) < 1e-15)) return { latex: '0', text: '0' };
+  // remove binary representation noise first (1.0005 is stored as 1.000499999…)
+  x = Number(x.toPrecision(15));
   const ax = Math.abs(x);
-  const small = Math.pow(10, -o.decimals);
-  if (ax >= Math.pow(10, o.expThreshold) || ax < small) {
+  const small = Math.pow(10, -Math.max(o.decimals, 3));
+  const rounded = Math.abs(Number(toFixedDec(x, Math.min(o.decimals, 15))));
+  if (ax >= Math.pow(10, o.expThreshold) || rounded >= Math.pow(10, o.expThreshold) || ax < small) {
     let exp = Math.floor(Math.log10(ax));
     let mant = x / Math.pow(10, exp);
-    let ms = trimZeros(mant.toFixed(o.decimals));
-    if (Math.abs(parseFloat(ms)) >= 10) { exp += 1; mant = x / Math.pow(10, exp); ms = trimZeros(mant.toFixed(o.decimals)); }
+    const fix = (m: number) => trimZeros(toFixedDec(m, o.decimals));
+    let ms = fix(mant);
+    if (Math.abs(parseFloat(ms)) >= 10) { exp += 1; mant = x / Math.pow(10, exp); ms = fix(mant); }
     const sign = ms.startsWith('-') ? '-' : '';
     if (sign) ms = ms.slice(1);
     return {
@@ -49,7 +63,7 @@ function formatRealDot(x: number, o: FormatOptions): Formatted {
   }
   let dec = o.decimals;
   if (ax < 1) dec = Math.min(o.decimals + Math.max(0, Math.floor(-Math.log10(ax))), 15);
-  let s = trimZeros(x.toFixed(dec));
+  let s = trimZeros(toFixedDec(x, dec));
   if (s === '-0') s = '0';
   return { latex: s.replace('-', '-'), text: s };
 }
@@ -146,7 +160,8 @@ function scalarSI(v: Val): { n: number | Complex; dims: number[] | null } {
   return { n: v as number | Complex, dims: null };
 }
 
-function fmtScalarNumber(n: number | Complex, o: FormatOptions): Formatted {
+function fmtScalarNumber(n: number | Complex, o: FormatOptions, dims?: number[] | null): Formatted {
+  if (dims) o = { ...o, keepTiny: true };
   return isComplex(n) ? formatComplex(n as Complex, o) : formatReal(n as number, o);
 }
 
@@ -160,7 +175,7 @@ export function formatValue(v: Val, o: FormatOptions = DEFAULT_FORMAT): Formatte
   }
   if (isMatrix(v)) return formatMatrix(v as Matrix, o);
   const { n, dims } = scalarSI(v);
-  const num = fmtScalarNumber(n, o);
+  const num = fmtScalarNumber(n, o, dims);
   if (!dims) return num;
   const f = siUnitFactors(dims);
   const needParens = isComplex(n) && (n as Complex).re !== 0 && (n as Complex).im !== 0;
@@ -189,7 +204,7 @@ function formatRows(rows: Val[][], o: FormatOptions): Formatted {
   const maxR = Math.min(R, o.maxMatrix), maxC = Math.min(C, o.maxMatrix);
   const cell = (x: Val): Formatted => {
     if (isMatrix(x)) { const s = (x as Matrix).size(); return { latex: `\\{${s[0]}\\times ${s[1]}\\}`, text: `{${s[0]}×${s[1]}}` }; }
-    if (allSame) return fmtScalarNumber(scalarSI(x).n, o);
+    if (allSame) return fmtScalarNumber(scalarSI(x).n, o, first.dims);
     return formatValue(x, o);
   };
   const lrows: string[] = [];
@@ -199,11 +214,12 @@ function formatRows(rows: Val[][], o: FormatOptions): Formatted {
     const l = cells.map(c => c.latex);
     if (C > maxC) l.push('\\cdots');
     lrows.push(l.join(' & '));
-    trows.push(cells.map(c => c.text).join(', '));
+    trows.push(cells.map(c => c.text).join(o.decimalComma ? '; ' : ', '));
   }
   if (R > maxR) lrows.push(Array(Math.min(C, maxC) + (C > maxC ? 1 : 0)).fill('\\vdots').join(' & '));
   let latex = `\\begin{bmatrix}${lrows.join(' \\\\ ')}\\end{bmatrix}`;
-  let text = `[${trows.join('; ')}${R > maxR ? '; …' : ''}]`;
+  const rs = o.decimalComma ? ' | ' : '; ';
+  let text = `[${trows.join(rs)}${R > maxR ? rs + '…' : ''}]`;
   if (allSame && first.dims) {
     const f = siUnitFactors(first.dims);
     latex += `\\ ${unitFactorsLatex(f)}`;
@@ -213,5 +229,6 @@ function formatRows(rows: Val[][], o: FormatOptions): Formatted {
 }
 
 export function escapeText(s: string): string {
-  return s.replace(/[\\{}$&#^_%~]/g, c => `\\${c === '\\' ? 'backslash ' : c}`);
+  const map: Record<string, string> = { '\\': '\\textbackslash{}', '~': '\\textasciitilde{}', '^': '\\textasciicircum{}' };
+  return s.replace(/[\\{}$&#^_%~]/g, c => map[c] ?? `\\${c}`);
 }

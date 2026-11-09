@@ -16,7 +16,7 @@ const GREEK: Record<string, string> = {
   θ: '\\theta', ϑ: '\\vartheta', ι: '\\iota', κ: '\\kappa', λ: '\\lambda', μ: '\\mu', µ: '\\mu', ν: '\\nu', ξ: '\\xi', ο: 'o',
   π: '\\pi', ρ: '\\rho', σ: '\\sigma', ς: '\\varsigma', τ: '\\tau', υ: '\\upsilon', φ: '\\varphi', ϕ: '\\phi', χ: '\\chi',
   ψ: '\\psi', ω: '\\omega', Γ: '\\Gamma', Δ: '\\Delta', Θ: '\\Theta', Λ: '\\Lambda', Ξ: '\\Xi', Π: '\\Pi', Σ: '\\Sigma',
-  Υ: '\\Upsilon', Φ: '\\Phi', Ψ: '\\Psi', Ω: '\\Omega', '∞': '\\infty', ℏ: '\\hbar', '°': '^{\\circ}', "'": "'",
+  Υ: '\\Upsilon', Φ: '\\Phi', Ψ: '\\Psi', Ω: '\\Omega', '∞': '\\infty', ℏ: '\\hbar', '°': '{}^{\\circ}', "'": "{}'",
   Α: 'A', Β: 'B', Ε: 'E', Ζ: 'Z', Η: 'H', Ι: 'I', Κ: 'K', Μ: 'M', Ν: 'N', Ο: 'O', Ρ: 'P', Τ: 'T', Χ: 'X',
 };
 
@@ -33,7 +33,7 @@ function chars(s: string, upright: boolean): string {
     if (GREEK[ch] !== undefined) {
       flush();
       const g = GREEK[ch];
-      out += upright && g.startsWith('\\') && /^[a-z]/i.test(g.slice(1)) && !['\\infty', "'", '^{\\circ}'].includes(g) ? `{${g}}` : g;
+      out += upright && g.startsWith('\\') && /^[a-z]/i.test(g.slice(1)) && !['\\infty', "{}'", '{}^{\\circ}'].includes(g) ? `{${g}}` : g;
       if (/^\\[a-zA-Z]+$/.test(g)) out += ' ';
     } else if (/[A-Za-z0-9.]/.test(ch)) plain += ch;
     else if (ch === '%') { flush(); out += '\\%'; }
