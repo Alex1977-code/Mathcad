@@ -4,7 +4,7 @@ import { renderLatex } from './katex';
 import { store, useStore, readPref, writePref } from './store';
 import {
   alignSelection, app, canPaste, changeDecimals, copySelection, deleteSelection, duplicateSelection, insertImage, insertMatrix,
-  insertRegion, insertSnippet, paste, recalcNow, separateAll, setZoom, showSide, toggleAutoCalc, toggleDisabled, toggleGrid,
+  insertRegion, insertSnippet, paste, recalcNow, separateAll, setZoom, showSide, toggleAutoCalc, toggleDefValues, toggleDisabled, toggleGrid,
   toggleSide, zoomBy, zoomPageWidth,
 } from './actions';
 import {
@@ -100,6 +100,7 @@ export function Ribbon() {
   const settings = useStore(s => s.ws.settings);
   const autoCalc = useStore(s => s.autoCalc);
   const showGrid = useStore(s => s.showGrid);
+  const showDefValues = useStore(s => s.showDefValues);
   const sideOpen = useStore(s => s.sideOpen);
   const zoom = useStore(s => s.zoom);
   const showChecks = useStore(s => s.showChecks);
@@ -336,6 +337,7 @@ export function Ribbon() {
             </Group>
             <Group label="Anzeigen">
               <Big icon={<IconGrid />} label="Raster" title="Raster ein/aus" onClick={toggleGrid} active={showGrid} />
+              <Big icon={<span className="ico-text">:=·</span>} label="Werte zeigen" title="Werte aller Definitionen grau daneben anzeigen" onClick={toggleDefValues} active={showDefValues} />
               <Big icon={<IconPanel />} label="Seitenleiste" title="Seitenleiste ein/aus" onClick={toggleSide} active={sideOpen} />
               <Big icon={<IconMoon />} label="Hell / Dunkel" title="Farbschema umschalten" onClick={() => app.toggleTheme()} />
             </Group>

@@ -5,11 +5,12 @@ import { store, useStore } from './store';
 import { Sheet } from './Sheet';
 import { Ribbon } from './Ribbon';
 import { SidePanel } from './SidePanel';
-import { ContextMenu, CommandPalette } from './Overlays';
+import { ContextMenu, CommandPalette, UnitPicker } from './Overlays';
+import { setLatestResult } from './smart';
 import { autosave, exportHtml, loadAutosave, pickFile, readWorksheet, resetFileHandle, saveWorksheet } from './files';
 import { exampleWorksheet } from './examples';
 import {
-  copySelection, duplicateSelection, paste, recalcNow, selectAll, separateAll, setAppHandlers, setZoom, showSide, toggleAutoCalc,
+  copySelection, duplicateSelection, insertMatrix, paste, recalcNow, selectAll, separateAll, setAppHandlers, setZoom, showSide, toggleAutoCalc,
   toggleSide, zoomBy,
 } from './actions';
 import { IconImport, IconMoon, IconPanel, IconRedo, IconSave, IconSun, IconUndo } from './icons';
@@ -41,6 +42,7 @@ export function App() {
   const autoCalc = useStore(s => s.autoCalc);
   const recalcTick = useStore(s => s.recalcTick);
   const { result, busy, error, progress, recalc, computedWs } = useCompute(ws, 60, autoCalc);
+  setLatestResult(result);
   const [theme, toggleTheme] = useTheme();
   const [report, setReport] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
@@ -131,6 +133,7 @@ export function App() {
       if (mod && k === 'x') { e.preventDefault(); copySelection(true); return; }
       if (mod && k === 'v') { e.preventDefault(); paste(); return; }
       if (mod && k === 'd') { e.preventDefault(); duplicateSelection(); return; }
+      if (mod && k === 'm' && !e.altKey) { e.preventDefault(); insertMatrix(3, 3); return; }
       if (mod && (e.key === '+' || e.key === '=')) { e.preventDefault(); zoomBy(0.1); return; }
       if (mod && e.key === '-') { e.preventDefault(); zoomBy(-0.1); return; }
       if (mod && e.key === '0') { e.preventDefault(); setZoom(1); return; }
@@ -249,6 +252,7 @@ export function App() {
       </footer>
       {report && <ImportReport result={result} busy={busy} onClose={() => setReport(false)} />}
       <ContextMenu />
+      <UnitPicker />
       <CommandPalette />
       {toast && <div className={`toast${toast.err ? ' err' : ''}`} role="status">{toast.text}</div>}
       {dragOver && <div className="drop-overlay">Datei hier ablegen – .fwk, .xmcd oder .mcdx</div>}

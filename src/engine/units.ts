@@ -117,3 +117,21 @@ export const COMMON_UNITS: { group: string; units: string[] }[] = [
 ];
 
 for (const t of [ANGLE_UNITS, SCALAR_UNITS, ALIASES]) Object.setPrototypeOf(t, null);
+
+/** SI dimension vector of a unit expression such as "kN*m" or "mm^2" (undefined if unknown or dimensionless). */
+export function unitDimensions(expr: string): number[] | undefined {
+  const simple = lookupUnit(expr);
+  if (simple !== null) return typeof simple === 'number' ? undefined : (simple as Unit).dimensions.slice();
+  try {
+    const s = expr.replace(/·/g, '*').replace(/[A-Za-zΩμµ°]+/g, n => ALIASES[n] ?? n.replace(/^[μµ]/, 'u'));
+    const u = math.unit(s) as Unit;
+    return u.dimensions.some(d => d !== 0) ? u.dimensions.slice() : undefined;
+  } catch { return undefined; }
+}
+
+/** Composite units offered in the result unit picker in addition to COMMON_UNITS. */
+export const EXTRA_DISPLAY_UNITS = [
+  'N*m', 'kN*m', 'N*mm', 'kN/m', 'N/m', 'N/mm', 'N/mm^2', 'kN/m^2', 'kN/m^3', 'kg/m^3', 't/m^3', 'kg/m',
+  'm/s', 'km/hr', 'mm/s', 'm/s^2', 'm^3/s', 'L/s', 'm^3/hr', 'cm^3', 'mm^3', 'cm^4', 'mm^4', 'm^4', 'dm^3',
+  'W/(m*K)', 'W/(m^2*K)', 'J/(kg*K)', 'kJ/kg', 'Pa*s', 'mPa*s', 'N*s', 'kg*m^2', 'mm^2/s', 'm^2/s', 'C', 'Wh', 'MWh', 'kVA',
+];

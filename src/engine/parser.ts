@@ -427,7 +427,7 @@ export function parseExpression(src: string, allowRange = true): Node {
 /* Statements                                                           */
 /* ------------------------------------------------------------------ */
 
-function findTopLevel(toks: Token[], pred: (t: Token) => boolean, from = 0): number {
+export function findTopLevel(toks: Token[], pred: (t: Token) => boolean, from = 0): number {
   let depth = 0;
   for (let j = from; j < toks.length; j++) {
     const t = toks[j];

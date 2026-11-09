@@ -6,7 +6,8 @@ import { MARGIN, PAGE_H, PAGE_W, regionElements, snap } from './layout';
 import { MathRegionView } from './regions/MathRegionView';
 import { TextRegionView } from './regions/TextRegionView';
 import { PlotRegionView } from './regions/PlotRegionView';
-import { newMathRegion } from './actions';
+import { insertSnippet, newMathRegion } from './actions';
+import { quickPlotAtCursor } from './smart';
 
 interface Props { result: ComputeResult | null; onOpenExample: () => void; onImport: () => void; pending?: Set<string> }
 
@@ -102,6 +103,17 @@ export function Sheet({ result, onOpenExample, onImport, pending }: Props) {
     e.stopPropagation();
     if (store.get().editing === r.id) return;
     if (store.get().editing) finishEditing();
+    // click on a result (Mathcad: unit placeholder) → choose the display unit
+    const hit = (e.target as HTMLElement).closest?.('.fw-result');
+    if (hit && r.type === 'math' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+      const res = result?.results[r.id];
+      if (res?.resultLatex && !res.error && res.src === r.src) {
+        e.preventDefault();
+        const b = hit.getBoundingClientRect();
+        store.set({ selection: [r.id], unitPicker: { regionId: r.id, x: b.left, y: b.bottom + 6 } });
+        return;
+      }
+    }
     let sel = store.get().selection;
     if (e.shiftKey || e.ctrlKey || e.metaKey) sel = sel.includes(r.id) ? sel.filter(x => x !== r.id) : [...sel, r.id];
     else if (!sel.includes(r.id)) sel = [r.id];
@@ -182,7 +194,7 @@ export function Sheet({ result, onOpenExample, onImport, pending }: Props) {
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     const s = store.get();
-    if (s.editing || s.palette || s.contextMenu) return;
+    if (s.editing || s.palette || s.contextMenu || s.unitPicker) return;
     // AltGr (German keyboard: [ ] { } \ | @ € µ ~) arrives as Ctrl+Alt and must still start a formula
     const altGr = e.getModifierState?.('AltGraph') || (e.ctrlKey && e.altKey && e.key.length === 1);
     if ((e.ctrlKey || e.metaKey || e.altKey) && !altGr) return;
@@ -217,6 +229,13 @@ export function Sheet({ result, onOpenExample, onImport, pending }: Props) {
       e.preventDefault();
       if (e.key === '"') {
         store.addRegion({ id: newId(), type: 'text', x: cur.x, y: cur.y, w: 360, html: '' }, true);
+        return;
+      }
+      // Mathcad: "@" X-Y plot, "$" sum, "&" integral
+      if (e.key === '@') { quickPlotAtCursor(); return; }
+      if (e.key === '$' || e.key === '&') {
+        store.set({ selection: [] });
+        insertSnippet(e.key === '$' ? 'sum(?, i, 1, n)' : 'int(?, x, a, b)');
         return;
       }
       const r = newMathRegion(cur.x, cur.y, e.key === ' ' ? '' : e.key);

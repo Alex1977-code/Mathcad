@@ -44,6 +44,13 @@ export interface RegionResult {
   check?: { status: CheckStatus; expected: string };
   /** Symbolic result from Mathcad (LaTeX), shown for symbolic evaluations. */
   symbolicLatex?: string;
+  /** Dimension vector of the shown value (SI exponents; for the unit picker). */
+  dims?: number[];
+  /** Value of a definition without "=" (shown on demand / as tooltip). */
+  valueLatex?: string;
+  valueText?: string;
+  /** The definition is a plain number / unit literal (its value adds nothing next to it). */
+  literal?: boolean;
 }
 
 export interface VariableInfo { name: string; kind: 'Variable' | 'Funktion' | 'Bereich'; text: string; latex: string; regionId: string }
@@ -110,6 +117,14 @@ function cartesian(names: string[], scope: Scope): Map<string, Val>[] {
     if (combos.length > 2e6) throw new CalcError('Zu viele Kombinationen von Bereichsvariablen');
   }
   return combos;
+}
+
+/** SI dimension vector of a value (first element of a matrix), undefined if dimensionless or not numeric. */
+function dimsOf(v: Val): number[] | undefined {
+  let x: Val = v;
+  if (isMatrix(v)) { const r = (v as Matrix).toArray() as unknown as Val[][]; x = Array.isArray(r[0]) ? r[0][0] : (r[0] as Val); }
+  if (isUnit(x)) { const d = (x as Unit).dimensions; return d.some(q => q !== 0) ? d.slice() : undefined; }
+  return undefined;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -347,6 +362,18 @@ export class WorksheetEngine {
             else v = this.evalWithRanges(p.expr, scope);
             scope.set(t.name, v);
             if (p.show) this.formatResult(res, v, p.show.unit, scope);
+            else if (!isFn(v)) {
+              // value for the optional display of definitions and the tooltip (small matrices only in full)
+              const f = formatValue(v, { ...this.fmt, maxMatrix: 6 });
+              res.valueLatex = f.latex; res.valueText = f.text; res.dims = dimsOf(v);
+              let lit = true;
+              walk(p.expr, n => {
+                if (n.k === 'call' || n.k === 'iter' || n.k === 'int' || n.k === 'deriv' || n.k === 'program') lit = false;
+                else if (n.k === 'id' && (scope.get(n.name) !== undefined || lookupUnit(n.name) === null)) lit = false;
+                return lit;
+              });
+              if (lit) res.literal = true;
+            }
           }
           break;
         }
@@ -428,6 +455,7 @@ export class WorksheetEngine {
 
   formatResult(res: RegionResult, v: Val, unitNode: Node | undefined, scope: Scope) {
     this.lastValue = v;
+    res.dims = dimsOf(v);
     if (this.opts.keepValues) res.value = v;
     if (unitNode && unitNode.k !== 'placeholder') {
       const shown = this.convertToUnit(v, unitNode, scope);

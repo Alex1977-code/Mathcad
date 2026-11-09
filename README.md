@@ -34,13 +34,23 @@ Voraussetzung: Node.js ≥ 20. Die App läuft komplett im Browser, es werden kei
 | Griechische Buchstaben | `\alpha` + Leertaste, `Strg+G` (a → α) oder Palette |
 | Vorschläge | erscheinen beim Tippen, `Tab` übernimmt |
 
+### Wenig Klicks, viel Ergebnis
+
+| Aktion | So geht's |
+|---|---|
+| Einheit eines Ergebnisses ändern | **auf das Ergebnis klicken** → passende Einheiten (z. B. `J`, `kN·m`, `N·mm`) oder eigene eintippen; „Auto (SI)“ entfernt sie wieder. Im selben Fenster: Ergebnis kopieren, Nachkommastellen ± |
+| Funktion zeichnen | Rechtsklick auf `f(x) := …` → *Diagramm von f(x) einfügen* – oder Funktion markieren und `@` |
+| Gleichung lösen | `a*y + 1 == 10` tippen, Rechtsklick → *Gleichung nach y lösen*: legt Startwert, `Given`, Gleichung und `y := Find(y) =` an; der Startwert bekommt automatisch die passende Einheit |
+| Wert einer Definition zeigen | Rechtsklick → *Wert anzeigen* / *Wert ausblenden* (hängt `=` an bzw. entfernt es); alle auf einmal: *Ansicht → Werte zeigen* (grau, wird nicht gedruckt); der Wert steht außerdem im Tooltip |
+| Vorlagen wie in Mathcad | `@` X-Y-Diagramm, `$` Summe, `&` Integral, `Strg+M` Matrix 3×3 – `Tab` springt zum nächsten Platzhalter |
+
 ### Oberfläche
 
 ![Menüband](docs/screenshot-menueband.png)
 
-- **Menüband mit Registerkarten** wie in Office/Mathcad Prime: *Start* (Zwischenablage, Bereiche, Bearbeiten, Anordnen), *Mathematik* (Operatoren, Analysis, Logik, griechische Buchstaben, Einheiten, Konstanten), *Matrizen & Programme* (Matrix mit Größenwähler, Matrixfunktionen, if/for/while, Solve-Blöcke), *Berechnung* (Jetzt berechnen, automatisch/manuell, Nachkommastellen, Exponentialschwelle, Dezimalpunkt/-komma, Startindex), *Ansicht* (Zoom, Raster, Seitenleiste, Hell/Dunkel).
+- **Menüband mit Registerkarten** wie in Office/Mathcad Prime: *Start* (Zwischenablage, Bereiche, Bearbeiten, Anordnen), *Mathematik* (Operatoren, Analysis, Logik, griechische Buchstaben, Einheiten, Konstanten), *Matrizen & Programme* (Matrix mit Größenwähler, Matrixfunktionen, if/for/while, Solve-Blöcke), *Berechnung* (Jetzt berechnen, automatisch/manuell, Nachkommastellen, Exponentialschwelle, Dezimalpunkt/-komma, Startindex), *Ansicht* (Zoom, Raster, Werte von Definitionen, Seitenleiste, Hell/Dunkel).
 - **Befehlspalette** `Strg+K`: jeden Befehl per Suchbegriff finden und ausführen.
-- **Kontextmenü** per Rechtsklick auf Bereiche (Bearbeiten, Auswertung deaktivieren, Kopieren, Duplizieren, Ausrichten, Löschen) und auf die leere Seite (Formel/Text/Diagramm hier einfügen).
+- **Kontextmenü** per Rechtsklick auf Bereiche (je nach Formel: Diagramm der Funktion, Gleichung lösen, Wert anzeigen, Einheit ändern, Ergebnis kopieren; außerdem Bearbeiten, Auswertung deaktivieren, Kopieren, Duplizieren, Ausrichten, Löschen) und auf die leere Seite (Formel/Text/Diagramm hier einfügen).
 - **Seitenleiste**: *Variablen* mit aktuellen Werten, *Probleme* (alle Fehler und Abweichungen zu Mathcad, Klick springt hin), *Gliederung* aus den Überschriften, *Hilfe* mit der kompletten Syntax.
 - **Statusleiste** mit Berechnungsfortschritt, Modus automatisch/manuell (`F9` rechnet), Fehlerzahl, Mathcad-Abgleich und Zoom. Bereiche, die gerade neu berechnet werden, sind gedimmt markiert.
 
@@ -131,6 +141,7 @@ src/engine/   Rechenkern (unabhängig von der Oberfläche)
 src/import/   Mathcad-Import (math30/math50-XML → Syntaxbaum → Text)
 src/ui/       React-Oberfläche; Berechnung läuft in einem Web Worker
   actions.ts     zentrale Befehle (Menüband, Kontextmenü, Befehlspalette, Tastenkürzel)
+  smart.ts       Formel-Umschreibungen für Einheitenwahl, Wert anzeigen, Diagramm aus Funktion, Gleichung lösen
 ```
 
 ## Lizenz

@@ -7,6 +7,7 @@ import { store, writePref } from './store';
 import { getActiveEditor } from './editing';
 import { MARGIN, regionElements, separateRegions, snap } from './layout';
 import { pickFile } from './files';
+import { quickPlotAtCursor } from './smart';
 
 export function newMathRegion(x: number, y: number, src = ''): Region {
   return { id: newId(), type: 'math', x, y, src };
@@ -162,6 +163,7 @@ export function zoomPageWidth() {
   const pad = parseFloat(getComputedStyle(sc.querySelector('.page-outer') ?? sc).paddingLeft || '40') * 2;
   setZoom(Math.floor(((sc.clientWidth - pad - 2) / 794) * 100) / 100);
 }
+export function toggleDefValues() { const v = !store.get().showDefValues; store.set({ showDefValues: v }); writePref('defValues', v); }
 export function toggleGrid() { const v = !store.get().showGrid; store.set({ showGrid: v }); writePref('grid', v); }
 export function showSide(tab: ReturnType<typeof store.get>['sideTab']) { store.set({ sideOpen: true, sideTab: tab, plotEditor: null }); }
 export function toggleSide() { store.set({ sideOpen: !store.get().sideOpen }); }
@@ -211,10 +213,12 @@ export function commands(): Command[] {
     { id: 'disable', group: 'Bearbeiten', label: 'Auswertung deaktivieren / aktivieren', run: toggleDisabled, when: hasSel },
     { id: 'math', group: 'Einfügen', label: 'Formel', keys: 'Tippen', run: () => insertRegion('math') },
     { id: 'text', group: 'Einfügen', label: 'Textbereich', keys: '"', run: () => insertRegion('text'), tags: 'notiz beschreibung' },
-    { id: 'plot', group: 'Einfügen', label: 'X-Y-Diagramm', run: () => insertRegion('plot'), tags: 'diagramm plot graph kurve' },
+    { id: 'plot', group: 'Einfügen', label: 'X-Y-Diagramm', keys: '@', run: () => quickPlotAtCursor(), tags: 'diagramm plot graph kurve' },
     { id: 'image', group: 'Einfügen', label: 'Bild …', run: () => insertImage() },
     { id: 'pagebreak', group: 'Einfügen', label: 'Seitenumbruch', run: () => insertRegion('pagebreak') },
-    { id: 'matrix', group: 'Einfügen', label: 'Matrix 3×3', run: () => insertMatrix(3, 3) },
+    { id: 'matrix', group: 'Einfügen', label: 'Matrix 3×3', keys: 'Strg+M', run: () => insertMatrix(3, 3) },
+    { id: 'sumt', group: 'Einfügen', label: 'Summe Σ', keys: '$', run: () => insertSnippet('sum(?, i, 1, n)') },
+    { id: 'intt', group: 'Einfügen', label: 'Integral ∫', keys: '&', run: () => insertSnippet('int(?, x, a, b)') },
     { id: 'given', group: 'Einfügen', label: 'Solve-Block (Given … Find)', run: () => insertSnippet('Given') },
     { id: 'alignl', group: 'Anordnen', label: 'Links ausrichten', run: () => alignSelection('left'), when: () => store.get().selection.length > 1 },
     { id: 'alignt', group: 'Anordnen', label: 'Oben ausrichten', run: () => alignSelection('top'), when: () => store.get().selection.length > 1 },
@@ -231,6 +235,7 @@ export function commands(): Command[] {
     { id: 'help', group: 'Ansicht', label: 'Kurzreferenz', keys: 'F1', run: () => showSide('help') },
     { id: 'side', group: 'Ansicht', label: 'Seitenleiste ein/aus', run: toggleSide },
     { id: 'grid', group: 'Ansicht', label: 'Raster ein/aus', run: toggleGrid },
+    { id: 'defvals', group: 'Ansicht', label: 'Werte von Definitionen anzeigen ein/aus', run: toggleDefValues, tags: 'wert zeigen variablen' },
     { id: 'theme', group: 'Ansicht', label: 'Hell / Dunkel umschalten', run: () => app.toggleTheme() },
     { id: 'zin', group: 'Ansicht', label: 'Vergrößern', keys: 'Strg++', run: () => zoomBy(0.1), tags: 'zoom größer' },
     { id: 'zout', group: 'Ansicht', label: 'Verkleinern', keys: 'Strg+-', run: () => zoomBy(-0.1), tags: 'zoom kleiner' },

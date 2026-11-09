@@ -203,7 +203,11 @@ function Help() {
       <table><tbody>
         <tr><td>Strg+G</td><td>Buchstabe → griechisch (a → α)</td></tr>
         <tr><td>\alpha + Leer</td><td>α (auch \Delta, \sum …)</td></tr>
-        <tr><td>Tab</td><td>Vorschlag übernehmen</td></tr>
+        <tr><td>Tab</td><td>Vorschlag übernehmen / nächster Platzhalter</td></tr>
+        <tr><td>Klick aufs Ergebnis</td><td>Einheit wählen, kopieren, Stellen ±</td></tr>
+        <tr><td>Rechtsklick</td><td>Diagramm von f(x), Gleichung lösen, Wert anzeigen</td></tr>
+        <tr><td>@ · $ · &amp;</td><td>Diagramm · Summe · Integral</td></tr>
+        <tr><td>Strg+M</td><td>Matrix 3×3</td></tr>
         <tr><td>Strg+Z / Strg+Y</td><td>Rückgängig / Wiederholen</td></tr>
         <tr><td>Strg+C/X/V/D</td><td>Kopieren, Ausschneiden, Einfügen, Duplizieren</td></tr>
         <tr><td>Pfeiltasten</td><td>Auswahl oder Kreuz verschieben</td></tr>

@@ -321,6 +321,10 @@ button { cursor: pointer; }
 .math-view { white-space: nowrap; line-height: 1.35; }
 .math-view .katex { font-size: 1.13em; }
 .math-view .fw-result { color: var(--result); }
+.math-view .fw-result { cursor: pointer; border-radius: 3px; }
+.math-view .fw-result:hover { background: var(--accent-soft); box-shadow: 0 1px 0 var(--result); }
+.math-view .fw-defval { color: var(--text-faint); }
+@media print { .math-view .fw-defval { display: none; } }
 .fw-err-id { color: var(--danger); text-decoration: underline wavy var(--danger); text-decoration-thickness: 1px; }
 .math-placeholder { color: var(--text-faint); font-style: italic; }
 .error-chip {
@@ -570,3 +574,24 @@ button.status-item:hover { background: var(--bg-hover); }
 .region.editing .grip { display: none !important; }
 /* result of an older version of the formula (recalculation still running) */
 .math-view.stale .fw-result, .math-view.stale .result-part { opacity: .35; transition: opacity .1s; }
+
+/* result unit picker (click on a result) */
+.unit-picker {
+  position: fixed; z-index: 150; width: 300px; padding: 10px; background: var(--bg-elev); border: 1px solid var(--border);
+  border-radius: 10px; box-shadow: var(--shadow-pop); animation: fade .08s; font-size: 13px;
+}
+.unit-picker .up-head { font-weight: 600; margin: 0 2px 8px; }
+.unit-picker .up-units { display: flex; flex-wrap: wrap; gap: 5px; max-height: 180px; overflow: auto; }
+.unit-picker .up-units button {
+  border: 1px solid var(--border); background: transparent; border-radius: 6px; padding: 4px 9px; font-variant-numeric: tabular-nums;
+}
+.unit-picker .up-units button:hover { background: var(--accent-soft); }
+.unit-picker .up-units button.sel { background: var(--accent); border-color: var(--accent); color: #fff; }
+.unit-picker .up-custom { display: flex; gap: 6px; margin-top: 9px; }
+.unit-picker .up-custom input { flex: 1; min-width: 0; border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; background: transparent; color: inherit; }
+.unit-picker .up-custom input.bad { border-color: var(--danger); }
+.unit-picker .up-foot { display: flex; align-items: center; gap: 6px; margin-top: 9px; padding-top: 8px; border-top: 1px solid var(--border); }
+.unit-picker .up-foot button { border: 1px solid var(--border); background: transparent; border-radius: 6px; padding: 2px 9px; }
+.unit-picker .up-foot button:hover { background: var(--accent-soft); }
+.unit-picker .up-foot .up-spacer { flex: 1; }
+.unit-picker .up-foot b { min-width: 16px; text-align: center; }

@@ -33,6 +33,10 @@ export interface AppState {
   /** Something to undo / redo (for the state of the buttons). */
   canUndo: boolean;
   canRedo: boolean;
+  /** Unit picker opened by clicking a result. */
+  unitPicker: { regionId: string; x: number; y: number } | null;
+  /** Show the values of definitions (greyed) next to them. */
+  showDefValues: boolean;
 }
 
 const HISTORY_LIMIT = 200;
@@ -51,6 +55,7 @@ class Store {
     fileName: null, dirty: false, zoom: 1, showChecks: true, plotEditor: null, focusRegion: null, docId: 0,
     autoCalc: true, showGrid: readPref('grid', true), sideOpen: typeof window === 'undefined' || window.innerWidth > 900,
     sideTab: 'vars', palette: false, contextMenu: null, recalcTick: 0, canUndo: false, canRedo: false,
+    unitPicker: null, showDefValues: readPref('defValues', false),
   };
   past: Worksheet[] = [];
   future: Worksheet[] = [];

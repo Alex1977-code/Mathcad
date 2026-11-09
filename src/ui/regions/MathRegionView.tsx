@@ -6,8 +6,9 @@ import { stmtLatex, nameLatex } from '../../engine/latex';
 import { isUnitName, COMMON_UNITS } from '../../engine/units';
 import { BUILTIN_NAMES, isBuiltinFunction } from '../../engine/builtins';
 import { renderLatex } from '../katex';
-import { store } from '../store';
+import { store, useStore } from '../store';
 import { GREEK_NAMES, IDENT_RE, insertSnippet, setActiveEditor, toGreek } from '../editing';
+import { insertMatrix } from '../actions';
 
 /* ------------------------------------------------------------------ */
 /* LaTeX composition                                                    */
@@ -18,7 +19,7 @@ const localCtx = {
   isBuiltin: (n: string) => isBuiltinFunction(n),
 };
 
-export function composeLatex(src: string, res: RegionResult | undefined, preferLocal = false): { latex: string; parseError?: ParseError } {
+export function composeLatex(src: string, res: RegionResult | undefined, preferLocal = false, defValue = false): { latex: string; parseError?: ParseError } {
   if (!src.trim()) return { latex: '' };
   if (/^\s*given\s*$/i.test(src)) return { latex: '\\textbf{Given}' };
   let base = preferLocal ? undefined : res?.latex;
@@ -40,6 +41,10 @@ export function composeLatex(src: string, res: RegionResult | undefined, preferL
     else latex += ' = \\htmlClass{fw-result}{\\,\\cdot\\,}';
   }
   if (res?.symbolicLatex) latex += ` \\rightarrow ${res.symbolicLatex}`;
+  // optional: value of a plain definition, greyed (the region itself stays a pure definition)
+  if (defValue && !show && kind === 'define' && res?.valueLatex && !res.literal && !res.error && res.valueLatex.length < 600) {
+    latex += ` \\htmlClass{fw-defval}{\\;=\\;${res.valueLatex}}`;
+  }
   void kind;
   return { latex };
 }
@@ -85,15 +90,17 @@ interface Props {
 }
 
 export function MathRegionView({ region, result, editing, variables, showCheck, onCommit }: Props) {
+  const defValues = useStore(s => s.showDefValues);
   if (editing) return <MathEditor region={region} result={result} variables={variables} onCommit={onCommit} />;
   // result of an older text (recalculation still running): show the new formula without the old value
   const stale = !!result && result.src !== undefined && result.src !== region.src;
-  const { latex } = composeLatex(region.src, stale ? { id: region.id } : result);
+  const { latex } = composeLatex(region.src, stale ? { id: region.id } : result, false, defValues);
   const err = stale ? undefined : result?.error;
+  const tip = !stale && result?.valueText && !result.literal && !err ? `= ${result.valueText}` : !stale && result?.resultLatex && !err ? 'Klick auf das Ergebnis: Einheit wählen' : undefined;
   return (
     <>
       {latex
-        ? <div className="math-view" dangerouslySetInnerHTML={{ __html: renderLatex(latex) }} />
+        ? <div className="math-view" title={tip} dangerouslySetInnerHTML={{ __html: renderLatex(latex) }} />
         : <div className="math-view math-placeholder">{region.src.trim() ? region.src : 'leer'}</div>}
       {err && <div className="error-chip">{err.message}</div>}
       {showCheck && !stale && result?.check && result.check.status !== 'skipped' && (
@@ -238,6 +245,16 @@ function MathEditor({ region, result, variables, onCommit }: Omit<Props, 'editin
       setSrc(next, s + 2);
       return;
     }
+    // Mathcad templates: "$" sum, "&" integral, Ctrl+M matrix (not inside a string)
+    const inString = ((v.slice(v.lastIndexOf('\n', s - 1) + 1, s).match(/"/g)?.length ?? 0) % 2) === 1;
+    if ((e.key === '$' || e.key === '&') && !inString && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault();
+      const ins = e.key === '$' ? 'sum(?, i, 1, n)' : 'int(?, x, a, b)';
+      const k = s + ins.indexOf('?');
+      setSrc(v.slice(0, s) + ins + v.slice(end), k, k + 1);
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'm') { e.preventDefault(); insertMatrix(3, 3); return; }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'g' && s === end && s > 0) {
       e.preventDefault();
       const g = toGreek(v[s - 1]);

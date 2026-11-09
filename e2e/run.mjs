@@ -232,6 +232,29 @@ try {
   await shot('11-menueband-mathematik.png');
   await page.click('.rtab:has-text("Start")');
 
+  /* 12b · few clicks: unit picker on the result, smart context menu (plot a function, solve an equation) */
+  await page.click('text=Datei');
+  await page.click('.menu >> text=Neu');
+  await page.waitForSelector('.welcome');
+  await page.mouse.click(420, 230);
+  for (const t of ['F:12 kN', 'a:2 m', 'F*a=', 'f(x):x^2-2', 'a*y+1==10']) { await page.keyboard.type(t); await page.keyboard.press('Enter'); }
+  await idle();
+  await page.locator('.fw-result').first().click();
+  await page.waitForSelector('.unit-picker');
+  await shot('12-einheit-waehlen.png');
+  await page.locator('.unit-picker .up-units button', { hasText: /^kN·m$/ }).click();
+  await idle();
+  ok(/24\s*kN/.test(await page.locator('.fw-result').first().innerText()), 'Klick aufs Ergebnis: Einheit kN·m gewählt (24 kN·m)');
+  await page.locator('.region.math-region', { hasText: 'x' }).last().click({ button: 'right' });
+  await page.locator('.ctxmenu button', { hasText: 'Diagramm von f(x)' }).click();
+  await idle();
+  ok((await page.locator('.plot-region .plot-svg path').count()) > 0, 'Kontextmenü: Diagramm von f(x) mit einem Klick');
+  await page.locator('.region.math-region').last().click({ button: 'right' });
+  await page.locator('.ctxmenu button', { hasText: 'Gleichung nach y lösen' }).click();
+  await idle();
+  ok(/4\.5/.test(await lastRegionText()) && (await page.locator('.region.error').count()) === 0, 'Kontextmenü: Gleichung a·y + 1 = 10 gelöst, Startwert mit passender Einheit (y = 4.5 1/m)');
+  await shot('13-diagramm-loesen.png');
+
   /* 13 · responsiveness on a large imported sheet: an edit at the end is recalculated incrementally */
   {
     const fc = page.waitForEvent('filechooser');
