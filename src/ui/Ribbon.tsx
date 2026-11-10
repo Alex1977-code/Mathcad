@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { COMMON_UNITS } from '../engine/units';
 import { renderLatex } from './katex';
+import { RecentList } from './RecentList';
 import { store, useStore, readPref, writePref } from './store';
 import {
   alignSelection, app, canPaste, changeDecimals, copySelection, deleteSelection, duplicateSelection, insertImage, insertMatrix,
@@ -120,8 +121,13 @@ export function Ribbon() {
               <button onClick={() => { close(); app.save(true); }}>Speichern unter …<kbd>Strg+⇧+S</kbd></button>
               <hr />
               <button onClick={() => { close(); app.exportDocx(); }}>Als Word (.docx) exportieren</button>
+              <button onClick={() => { close(); app.exportMcdx(); }}>Als Mathcad Prime (.mcdx) exportieren</button>
               <button onClick={() => { close(); app.exportHtml(); }}>Als HTML exportieren</button>
+              <button onClick={() => { close(); store.set({ pageSetup: true }); }}>Kopf- und Fußzeile …</button>
               <button onClick={() => { close(); app.print(); }}>Drucken / als PDF<kbd>Strg+P</kbd></button>
+              <hr />
+              <div className="menu-label">Zuletzt verwendet</div>
+              <RecentList compact onPick={close} />
               <hr />
               <button onClick={() => { close(); app.openExample(); }}>Beispiel öffnen</button>
             </>

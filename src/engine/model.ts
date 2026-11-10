@@ -70,6 +70,16 @@ export interface WorksheetSettings {
   fontSize?: number;
   /** Show results with a decimal comma (input always uses the point). */
   decimalComma?: boolean;
+  /** Project data and page header/footer for print and export. */
+  page?: PageInfo;
+}
+
+export interface PageInfo {
+  project?: string;
+  author?: string;
+  /** Left, centre, right; placeholders see pageinfo.ts. */
+  header?: [string, string, string];
+  footer?: [string, string, string];
 }
 
 export interface Worksheet {
@@ -145,6 +155,18 @@ export function normalizeWorksheet(raw: unknown): Worksheet {
     fontSize: num(s.fontSize, 8, 40, DEFAULT_SETTINGS.fontSize!),
     ...(s.decimalComma === true ? { decimalComma: true } : {}),
   };
+  const pg = s.page && typeof s.page === 'object' ? s.page as Record<string, unknown> : null;
+  if (pg) {
+    const three = (v: unknown): [string, string, string] | undefined =>
+      Array.isArray(v) ? [0, 1, 2].map(i => str(v[i], 300) ?? '') as [string, string, string] : undefined;
+    const page: PageInfo = {};
+    if (str(pg.project, 300)) page.project = str(pg.project, 300);
+    if (str(pg.author, 300)) page.author = str(pg.author, 300);
+    const h = three(pg.header), f = three(pg.footer);
+    if (h) page.header = h;
+    if (f) page.footer = f;
+    settings.page = page;
+  }
   const ids = new Set<string>();
   const regions: Region[] = [];
   for (const r0 of (o.regions as unknown[]).slice(0, 100000)) {

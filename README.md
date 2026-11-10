@@ -90,10 +90,14 @@ Messung (`npx tsx scripts/bench.mts`, Node 22):
 ### Dateien
 
 - **Speichern/Öffnen** im eigenen Format `.fwk` (JSON). Zusätzlich automatische Sicherung im Browser.
-- **Speichern unter** (`Strg+Umschalt+S`) mit Dateityp: FormelWerk (`.fwk`), Word (`.docx`) oder Webseite (`.html`). In Browsern ohne Dateidialog-Schnittstelle (z. B. Firefox, Safari) wird nach dem Dateinamen gefragt; die Endung bestimmt das Format.
+- **Zuletzt verwendet**: Datei-Menü und Startseite zeigen die letzten Dokumente (geöffnet, importiert oder gespeichert). Wo der Browser es erlaubt (Chrome, Edge), wird die Datei selbst wieder geöffnet und `Strg+S` schreibt direkt in sie zurück; sonst öffnet sich der zuletzt gespeicherte Stand. Die Liste liegt nur im Browser.
+- **Speichern unter** (`Strg+Umschalt+S`) mit Dateityp: FormelWerk (`.fwk`), Word (`.docx`), Webseite (`.html`) oder Mathcad Prime (`.mcdx`). In Browsern ohne Dateidialog-Schnittstelle (z. B. Firefox, Safari) wird nach dem Dateinamen gefragt; die Endung bestimmt das Format.
 - **Word-Export** (`.docx`): Formeln werden **echte, bearbeitbare Word-Formeln** (OMML) – Brüche, Wurzeln, Indizes, Matrizen, Summen/Integrale, Programme, Ergebnisse mit Einheiten; Texte mit Formatierung und Überschriften, Bilder und Diagramme als Grafik, nebeneinanderliegende Bereiche über Tabstopps, Fußzeile mit Titel und „Seite n von N“. Geprüft mit python-docx und LibreOffice.
 - **Drucken / PDF** (`Strg+P`, A4): immer im hellen Farbschema, Fußzeile mit Titel, Datum und Seitenzahl, Bereiche werden an Seitengrenzen nicht zerschnitten (ganze Zeilen rücken auf die nächste Seite), manuelle Seitenumbrüche wirken. Etwas zu breite Blätter werden auf Seitenbreite verkleinert; Nebenrechnungen weit rechts neben der Seite werden wie bei Mathcads „Nur Seitenbreite drucken“ weggelassen.
 - **Zwischenablage**: `Strg+C` legt Formeln als Text und – für Word – als Gleichungen (OMML) ab; *Als Bild kopieren* (Kontextmenü) liefert ein PNG für Word, PowerPoint oder E-Mail. `Strg+V` fügt Text aus anderen Programmen ein: Formelzeilen werden Formeln (auch `≔`), übrige Zeilen Textbereiche; Bilder aus der Zwischenablage werden Bildbereiche.
+- **Export nach Mathcad Prime** (`.mcdx`): Formeln in Primes eigener Math-XML-Schreibweise (genau wie Prime sie speichert: Definitionen, Auswertungen mit Anzeigeeinheit, Funktionen, Programme, Matrizen, Bereiche, Summen, Integrale, Ableitungen, Indizes), Solve-Blöcke (`Given … Find` werden ein Prime-Solve-Block mit Schätzwerten, Bedingungen und Löser), Texte als XAML, Bilder, X-Y-Diagramme. Geprüft im Rundlauf: Export → Import → Neuberechnung liefert auf elf Testblättern (u. a. `RC_col`, `statistics`, `matrices`) identische Ergebnisse und Diagramme. In Mathcad Prime selbst konnte die Datei hier nicht geöffnet werden. Symbolische Auswertungen werden numerisch übernommen.
+- **Kopf- und Fußzeile** (Datei-Menü): je links, Mitte, rechts mit Platzhaltern `{titel}`, `{datei}`, `{projekt}`, `{bearbeiter}`, `{datum}`, `{seite}`, `{seiten}`; Projekt und Bearbeiter werden im Dokument gespeichert. Gilt für Druck/PDF und Word (dort als echte Seitenfelder).
+- **Suchen und Ersetzen** (`Strg+F`, `Strg+H`, `F3`): in Formeln und Texten, Groß-/Kleinschreibung und ganze Wörter wählbar, Treffer werden angesprungen; „Alle ersetzen“ ist ein einziger Rückgängig-Schritt, Formatierungen in Texten bleiben erhalten.
 - **Export** als eigenständige HTML-Seite (Schriften eingebettet).
 - **Hell- und Dunkelmodus**, Zoom, Drag & Drop von Dateien auf das Fenster.
 
@@ -145,12 +149,14 @@ src/engine/   Rechenkern (unabhängig von der Oberfläche)
   symbolic.ts    symbolische Auswertung → (Einsetzen, Vereinfachen, Ableiten, expand/float/solve)
   verify.ts      Vergleich mit gespeicherten Mathcad-Ergebnissen
 src/import/   Mathcad-Import (math30/math50-XML → Syntaxbaum → Text)
-src/export/   Word-Export: LaTeX → Office-Math (OMML), DOCX-Paket
+src/export/   Word-Export (LaTeX → Office-Math/OMML, DOCX) und Mathcad-Prime-Export (Syntaxbaum → math50-XML, MCDX)
 src/ui/       React-Oberfläche; Berechnung läuft in einem Web Worker
   actions.ts     zentrale Befehle (Menüband, Kontextmenü, Befehlspalette, Tastenkürzel)
   print.ts       Drucklayout (Seitenumbrüche, Fußzeilen, Skalierung)
   clipboard.ts   Zwischenablage (Text, Word-Gleichungen, Einfügen aus anderen Programmen)
   exporters.ts   Word-Export, Bilder von Bereichen und Diagrammen
+  recent.ts      Zuletzt verwendete Dateien (IndexedDB, Datei-Handles)
+  findReplace.ts Suchen und Ersetzen
   smart.ts       Formel-Umschreibungen für Einheitenwahl, Wert anzeigen, Diagramm aus Funktion, Gleichung lösen
 ```
 

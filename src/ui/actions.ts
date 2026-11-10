@@ -244,6 +244,8 @@ export interface AppHandlers {
   openFile: () => void; save: (as?: boolean) => void; newDoc: () => void; openExample: () => void;
   exportHtml: () => void; exportDocx: () => void; print: () => void; toggleTheme: () => void; showReport: () => void;
   notify: (text: string, err?: boolean) => void;
+  openRecent: (key: string) => void;
+  exportMcdx: () => void;
 }
 let handlers: AppHandlers | null = null;
 export function setAppHandlers(h: AppHandlers) { handlers = h; }
@@ -262,7 +264,9 @@ export function commands(): Command[] {
     { id: 'save', group: 'Datei', label: 'Speichern', keys: 'Strg+S', run: () => app.save() },
     { id: 'saveas', group: 'Datei', label: 'Speichern unter …', keys: 'Strg+Umschalt+S', run: () => app.save(true) },
     { id: 'docx', group: 'Datei', label: 'Als Word-Dokument (.docx) exportieren', run: () => app.exportDocx(), tags: 'word docx office export' },
+    { id: 'mcdx', group: 'Datei', label: 'Als Mathcad-Prime-Datei (.mcdx) exportieren', run: () => app.exportMcdx(), tags: 'mathcad prime export speichern' },
     { id: 'html', group: 'Datei', label: 'Als HTML exportieren', run: () => app.exportHtml() },
+    { id: 'pagesetup', group: 'Datei', label: 'Kopf- und Fußzeile, Projekt, Bearbeiter …', run: () => store.set({ pageSetup: true }), tags: 'seite einrichten kopfzeile fußzeile seitenzahl' },
     { id: 'print', group: 'Datei', label: 'Drucken / als PDF speichern', keys: 'Strg+P', run: () => app.print() },
     { id: 'example', group: 'Datei', label: 'Beispiel öffnen', run: () => app.openExample() },
     { id: 'undo', group: 'Bearbeiten', label: 'Rückgängig', keys: 'Strg+Z', run: () => store.undo() },
@@ -273,6 +277,8 @@ export function commands(): Command[] {
     { id: 'copyimg', group: 'Bearbeiten', label: 'Als Bild kopieren', run: () => copyImageWithToast(), when: hasSel, tags: 'png bild zwischenablage word' },
     { id: 'dup', group: 'Bearbeiten', label: 'Duplizieren', keys: 'Strg+D', run: duplicateSelection, when: hasSel },
     { id: 'del', group: 'Bearbeiten', label: 'Löschen', keys: 'Entf', run: deleteSelection, when: hasSel },
+    { id: 'find', group: 'Bearbeiten', label: 'Suchen …', keys: 'Strg+F', run: () => store.set({ find: { replace: false } }), tags: 'finden suche' },
+    { id: 'replace', group: 'Bearbeiten', label: 'Ersetzen …', keys: 'Strg+H', run: () => store.set({ find: { replace: true } }), tags: 'suchen ersetzen umbenennen' },
     { id: 'all', group: 'Bearbeiten', label: 'Alles auswählen', keys: 'Strg+A', run: selectAll },
     { id: 'disable', group: 'Bearbeiten', label: 'Auswertung deaktivieren / aktivieren', run: toggleDisabled, when: hasSel },
     { id: 'math', group: 'Einfügen', label: 'Formel', keys: 'Tippen', run: () => insertRegion('math') },

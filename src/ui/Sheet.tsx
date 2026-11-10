@@ -8,6 +8,7 @@ import { TextRegionView } from './regions/TextRegionView';
 import { PlotRegionView } from './regions/PlotRegionView';
 import { insertSnippet, newMathRegion } from './actions';
 import { quickPlotAtCursor } from './smart';
+import { RecentList } from './RecentList';
 
 interface Props { result: ComputeResult | null; onOpenExample: () => void; onImport: () => void; pending?: Set<string> }
 
@@ -329,6 +330,7 @@ export function Sheet({ result, onOpenExample, onImport, pending }: Props) {
                   <button className="btn" onClick={onOpenExample}>Beispiel öffnen</button>
                   <button className="btn" onClick={onImport}>Mathcad-Datei importieren</button>
                 </div>
+                <RecentList max={6} />
               </div>
             )}
           </div>

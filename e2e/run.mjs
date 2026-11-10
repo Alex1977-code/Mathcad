@@ -315,6 +315,50 @@ try {
     ok(pr.n >= 1 && /Seite 1 von/.test(pr.t ?? '') && pr.theme === 'light' && (await page.locator('.print-footer').count()) === 0, `Drucken: Fußzeile „${pr.t}“, helles Farbschema, danach wiederhergestellt`);
   }
 
+  /* 12d · find & replace, header/footer, recently used, Mathcad export */
+  {
+    await page.keyboard.press('Escape');
+    await page.mouse.click(1200, 820);
+    await page.keyboard.press('Control+f');
+    await page.waitForSelector('.findbar');
+    await page.locator('.findbar input').first().fill('w');
+    await page.waitForTimeout(200);
+    const cnt = await page.locator('.findbar .fb-count').first().innerText();
+    await page.keyboard.press('Control+h');
+    await page.locator('.findbar input').nth(1).fill('durchb');
+    await page.locator('.findbar button', { hasText: 'Alle' }).click();
+    await idle();
+    const note = await page.locator('.findbar .fb-count').nth(1).innerText();
+    ok(/von/.test(cnt) && /ersetzt/.test(note) && /durchb/.test(await page.locator('.page').innerText()), `Suchen und Ersetzen (Strg+F/Strg+H): „${cnt}“, ${note}`);
+    await page.keyboard.press('Control+z');
+    await page.locator('.findbar input').first().press('Escape');
+    // header / footer
+    await page.keyboard.press('Control+k'); await page.waitForTimeout(150); await page.keyboard.type('Kopf- und'); await page.keyboard.press('Enter');
+    await page.waitForSelector('.page-setup');
+    await page.locator('.page-setup input').nth(1).fill('Halle 3');
+    await page.locator('.page-setup .ps-row').first().locator('input').first().fill('Projekt {projekt}');
+    await page.waitForTimeout(400);
+    await shot('15-kopf-fusszeile.png');
+    await page.locator('.page-setup button', { hasText: 'Übernehmen' }).click();
+    await page.evaluate(() => window.dispatchEvent(new Event('beforeprint')));
+    const hdr = await page.locator('.print-header').first().textContent();
+    await page.evaluate(() => window.dispatchEvent(new Event('afterprint')));
+    ok(/Projekt Halle 3/.test(hdr ?? ''), `Kopfzeile mit Platzhalter im Druck: „${hdr}“`);
+    // Mathcad export: valid package with Prime math XML, readable again
+    const JSZip = require('jszip');
+    const dlm = page.waitForEvent('download');
+    await page.keyboard.press('Control+k'); await page.waitForTimeout(150); await page.keyboard.type('Mathcad-Prime-Datei'); await page.keyboard.press('Enter');
+    const mz = await JSZip.loadAsync(readFileSync(await (await dlm).path()));
+    const wsx = await mz.file('mathcad/worksheet.xml').async('string');
+    ok(/<ml:define>/.test(wsx) && /<solveblock>/.test(wsx) && /<xyPlot>/.test(wsx), 'Export nach Mathcad Prime: Formeln, Solve-Block und Diagramm im Prime-Format');
+    // recently used: the imported files appear in the Datei menu
+    await page.click('text=Datei');
+    await page.waitForTimeout(300);
+    const rec = await page.locator('.menu .recent-name').allTextContents();
+    await page.keyboard.press('Escape');
+    ok(rec.some(n => /\.mcdx|\.xmcd|\.fwk/.test(n)), `Zuletzt verwendet im Datei-Menü (${rec.slice(0, 3).join(', ')})`);
+  }
+
   /* 13 · responsiveness on a large imported sheet: an edit at the end is recalculated incrementally */
   {
     const fc = page.waitForEvent('filechooser');

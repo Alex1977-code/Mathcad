@@ -151,8 +151,10 @@ export async function regionsToPng(ids: string[], scale = 2): Promise<{ data: Ui
 /** Word document of the worksheet. */
 export async function makeDocx(ws: Worksheet, result: ComputeResult | null): Promise<Blob> {
   const { buildDocx } = await import('../export/docx');
+  const { store } = await import('./store');
   return withLightTheme(() => buildDocx(ws, {
     result,
+    fileName: store.get().fileName,
     mathLatex: (r: MathRegion) => {
       const res = result?.results[r.id];
       const stale = !!res && res.src !== undefined && res.src !== r.src;

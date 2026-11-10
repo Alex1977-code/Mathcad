@@ -8,6 +8,7 @@ import JSZip from 'jszip';
 import { sortRegions, safeImageSrc, type Region, type Worksheet } from '../engine/model';
 import type { ComputeResult } from '../engine/worksheet';
 import { latexToOmml } from './omml';
+import { headerFooter, pageVars, templateParts } from '../engine/pageinfo';
 
 export interface DocxOptions {
   /** LaTeX of a math region as displayed (formula with result). */
@@ -15,6 +16,8 @@ export interface DocxOptions {
   /** PNG of a plot region (browser only), width/height in px. */
   plotPng?: (r: Region & { type: 'plot' }) => Promise<{ data: Uint8Array; w: number; h: number } | null>;
   result?: ComputeResult | null;
+  /** File name for the {datei} placeholder. */
+  fileName?: string | null;
 }
 
 const PAGE_MARGIN_PX = 48;            // left margin of the sheet
@@ -208,12 +211,19 @@ export async function buildDocx(ws: Worksheet, opts: DocxOptions): Promise<Blob>
 
   const title = String(ws.title ?? '');
   const ns = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"';
-  const sect = `<w:sectPr><w:footerReference w:type="default" r:id="rIdFooter"/><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="${PAGE_MARGIN_PX * TW}" w:bottom="1134" w:left="${PAGE_MARGIN_PX * TW}" w:header="567" w:footer="567" w:gutter="0"/></w:sectPr>`;
+  const hf = headerFooter(ws);
+  const hasHeader = hf.header.some(t => t.trim());
+  const sect = `<w:sectPr>${hasHeader ? '<w:headerReference w:type="default" r:id="rIdHeader"/>' : ''}<w:footerReference w:type="default" r:id="rIdFooter"/><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="${PAGE_MARGIN_PX * TW}" w:bottom="1134" w:left="${PAGE_MARGIN_PX * TW}" w:header="567" w:footer="567" w:gutter="0"/></w:sectPr>`;
   const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<w:document ${ns}><w:body>${body.join('')}${sect}</w:body></w:document>`;
 
   const fld = (instr: string) => `<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> ${instr} </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>1</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>`;
-  const footerXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<w:ftr ${ns}><w:p><w:pPr><w:pStyle w:val="Footer"/><w:tabs><w:tab w:val="right" w:pos="${(794 - 2 * PAGE_MARGIN_PX) * TW}"/></w:tabs></w:pPr>`
-    + `${runXml(title, {})}<w:r><w:tab/></w:r>${runXml('Seite ', {})}${fld('PAGE')}${runXml(' von ', {})}${fld('NUMPAGES')}</w:p></w:ftr>`;
+  // header / footer: left, centre and right part on tab stops; {seite}/{seiten} become Word fields
+  const vars = pageVars(ws, opts.fileName);
+  const widthTw = (794 - 2 * PAGE_MARGIN_PX) * TW;
+  const hfPara = (parts: string[], style: string) => `<w:p><w:pPr><w:pStyle w:val="${style}"/><w:tabs><w:tab w:val="center" w:pos="${Math.round(widthTw / 2)}"/><w:tab w:val="right" w:pos="${widthTw}"/></w:tabs></w:pPr>`
+    + parts.map(t => templateParts(t, vars).map(p => ('text' in p ? runXml(p.text, {}) : fld(p.field))).join('')).join('<w:r><w:tab/></w:r>') + '</w:p>';
+  const footerXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<w:ftr ${ns}>${hfPara(hf.footer, 'Footer')}</w:ftr>`;
+  const headerXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<w:hdr ${ns}>${hfPara(hf.header, 'Footer')}</w:hdr>`;
 
   const stylesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
@@ -229,11 +239,11 @@ export async function buildDocx(ws: Worksheet, opts: DocxOptions): Promise<Blob>
   const ctype: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', gif: 'image/gif' };
   const contentTypes = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>${exts.map(e => `<Default Extension="${e}" ContentType="${ctype[e]}"/>`).join('')}
-<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/></Types>`;
+<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/>${hasHeader ? '<Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>' : ''}<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/></Types>`;
   const rels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/></Relationships>`;
   const docRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rIdFooter" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/>${media.map(m => `<Relationship Id="${m.rid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/${m.name}"/>`).join('')}</Relationships>`;
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rIdFooter" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/>${hasHeader ? '<Relationship Id="rIdHeader" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/>' : ''}${media.map(m => `<Relationship Id="${m.rid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/${m.name}"/>`).join('')}</Relationships>`;
   const now = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
   const core = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:title>${esc(title)}</dc:title><dc:creator>FormelWerk</dc:creator><dcterms:created xsi:type="dcterms:W3CDTF">${now}</dcterms:created><dcterms:modified xsi:type="dcterms:W3CDTF">${now}</dcterms:modified></cp:coreProperties>`;
@@ -244,6 +254,7 @@ export async function buildDocx(ws: Worksheet, opts: DocxOptions): Promise<Blob>
   zip.file('word/document.xml', documentXml);
   zip.file('word/styles.xml', stylesXml);
   zip.file('word/footer1.xml', footerXml);
+  if (hasHeader) zip.file('word/header1.xml', headerXml);
   zip.file('word/_rels/document.xml.rels', docRels);
   zip.file('docProps/core.xml', core);
   for (const m of media) zip.file(`word/media/${m.name}`, m.data);

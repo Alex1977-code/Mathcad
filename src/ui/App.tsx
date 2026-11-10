@@ -6,8 +6,11 @@ import { Sheet } from './Sheet';
 import { Ribbon } from './Ribbon';
 import { SidePanel } from './SidePanel';
 import { ContextMenu, CommandPalette, UnitPicker } from './Overlays';
+import { PageSetupDialog } from './PageSetup';
+import { FindBar } from './FindBar';
 import { setLatestResult } from './smart';
-import { autosave, downloadBlob, exportHtml, htmlBlob, loadAutosave, pickFile, readWorksheet, resetFileHandle, safeName, saveWorksheet } from './files';
+import { autosave, downloadBlob, exportHtml, htmlBlob, loadAutosave, pickFileForOpen, readWorksheet, resetFileHandle, safeName, saveWorksheet, setFileHandle } from './files';
+import { addRecent, openRecent, type FileSystemFileHandleLike } from './recent';
 import { makeDocx, withLightTheme } from './exporters';
 import { installPrintHooks } from './print';
 import { exampleWorksheet } from './examples';
@@ -92,26 +95,59 @@ export function App() {
   const confirmDiscard = () => !store.get().dirty || store.get().ws.regions.length === 0 || window.confirm('Ungespeicherte Änderungen verwerfen?');
 
   const openFile = async (file?: File | null) => {
-    const f = file ?? await pickFile();
-    if (!f) return;
+    const picked = file ? { file, handle: undefined } : await pickFileForOpen();
+    if (!picked) return;
+    const f = picked.file;
     if (!confirmDiscard()) return;
     try {
       const doc = await readWorksheet(f);
       store.load(doc, f.name);
+      const own = /\.(fwk|json)$/i.test(f.name);
+      if (own && picked.handle) setFileHandle(picked.handle);
+      void addRecent(f.name, doc, picked.handle as FileSystemFileHandleLike | undefined);
       if (doc.source) { pendingSeparate.current = true; setReport(true); }
       else notify(`„${f.name}“ geöffnet`);
     } catch (e) {
       notify((e as Error).message, true);
     }
   };
-  const makers = { docx: () => makeDocx(store.get().ws, latestResult.current), html: () => withLightTheme(() => htmlBlob(store.get().ws)) };
+  const makeMcdx = async () => {
+    const { buildMcdx } = await import('../export/mcdx');
+    const r = await buildMcdx(store.get().ws);
+    if (r.warnings.length) notify(`Mathcad-Export: ${r.warnings.length} Hinweis${r.warnings.length > 1 ? 'e' : ''} – ${r.warnings[0]}`, true);
+    return r.blob;
+  };
+  const makers = { docx: () => makeDocx(store.get().ws, latestResult.current), html: () => withLightTheme(() => htmlBlob(store.get().ws)), mcdx: makeMcdx };
   const save = async (as = false) => {
     try {
       const r = await saveWorksheet(store.get().ws, as, makers);
       if (!r) return;
       if (r.exported) notify(`Exportiert: ${r.name}`);
-      else { store.set({ dirty: false, fileName: r.name }); notify(`Gespeichert: ${r.name}`); }
+      else {
+        store.set({ dirty: false, fileName: r.name });
+        notify(`Gespeichert: ${r.name}`);
+        void addRecent(r.name, store.get().ws, r.handle as FileSystemFileHandleLike | undefined);
+      }
     } catch (e) { notify('Speichern fehlgeschlagen: ' + (e as Error).message, true); }
+  };
+  const exportMcdx = async () => {
+    try {
+      const ws = store.get().ws;
+      downloadBlob(safeName(String(ws.title ?? '')) + '.mcdx', await makeMcdx());
+      notify('Als Mathcad-Prime-Datei exportiert');
+    } catch (e) { notify('Export fehlgeschlagen: ' + (e as Error).message, true); }
+  };
+  const openRecentEntry = async (key: string) => {
+    if (!confirmDiscard()) return;
+    try {
+      const r = await openRecent(key, readWorksheet);
+      if (!r) { notify('Eintrag nicht mehr vorhanden', true); return; }
+      store.load(r.ws, r.name);
+      if (r.handle && /\.(fwk|json)$/i.test(r.name)) setFileHandle(r.handle); else resetFileHandle();
+      if (r.ws.source && r.fromFile) { pendingSeparate.current = true; setReport(true); }
+      notify(r.fromFile ? `„${r.name}“ geöffnet` : `„${r.name}“ – gespeicherter Stand vom ${new Date(r.when).toLocaleString('de-DE')}`);
+      void addRecent(r.name, r.ws, r.handle);
+    } catch (e) { notify((e as Error).message, true); }
   };
   const exportDocx = async () => {
     try {
@@ -127,6 +163,8 @@ export function App() {
     openFile: () => openFile(), save: (as) => save(as), newDoc, openExample,
     exportHtml: () => { exportHtml(store.get().ws).catch(e => notify('Export fehlgeschlagen: ' + (e as Error).message, true)); }, print: () => setTimeout(() => window.print(), 50),
     exportDocx: () => { void exportDocx(); },
+    exportMcdx: () => { void exportMcdx(); },
+    openRecent: (key: string) => { void openRecentEntry(key); },
     notify: (text: string, err?: boolean) => notify(text, err),
     toggleTheme, showReport: () => setReport(true),
   });
@@ -142,6 +180,8 @@ export function App() {
       if (mod && k === 'o') { e.preventDefault(); openFile(); return; }
       if (mod && k === 'p') { e.preventDefault(); window.print(); return; }
       if (mod && k === 'k') { e.preventDefault(); store.set({ palette: !s.palette }); return; }
+      if (mod && (k === 'f' || k === 'h') && !inField) { e.preventDefault(); store.set({ find: { replace: k === 'h' } }); return; }
+      if (e.key === 'F3' && !inField) { e.preventDefault(); store.set({ find: { replace: !!s.find?.replace } }); return; }
       if (e.key === 'F9') { e.preventDefault(); recalcNow(); return; }
       if (e.key === 'F1') { e.preventDefault(); showSide('help'); return; }
       if (inField || s.editing) return;
@@ -179,6 +219,7 @@ export function App() {
       else if (mod && k === 'o') action = () => openFile();
       else if (mod && k === 'p') action = () => window.print();
       else if (mod && k === 'k') action = () => store.set({ palette: !store.get().palette });
+      else if (mod && (k === 'f' || k === 'h')) action = () => store.set({ find: { replace: k === 'h' } });
       else if (e.key === 'F9') action = () => recalcNow();
       else if (e.key === 'F1') action = () => showSide('help');
       else if (mod && (e.key === '+' || e.key === '=')) { e.preventDefault(); e.stopPropagation(); zoomBy(0.1); return; }
@@ -243,7 +284,10 @@ export function App() {
       </header>
       <Ribbon />
       <div className="main" style={{ gridTemplateColumns: sideOpen || plotEditor ? '1fr auto' : '1fr' }}>
-        <Sheet result={result} onOpenExample={openExample} onImport={() => openFile()} pending={pending} />
+        <div className="sheet-wrap">
+          <Sheet result={result} onOpenExample={openExample} onImport={() => openFile()} pending={pending} />
+          <FindBar />
+        </div>
         {(sideOpen || plotEditor) && <SidePanel result={result} />}
       </div>
       <footer className="statusbar">
@@ -282,6 +326,7 @@ export function App() {
       {report && <ImportReport result={result} busy={busy} onClose={() => setReport(false)} />}
       <ContextMenu />
       <UnitPicker />
+      <PageSetupDialog />
       <CommandPalette />
       {toast && <div className={`toast${toast.err ? ' err' : ''}`} role="status">{toast.text}</div>}
       {dragOver && <div className="drop-overlay">Datei hier ablegen – .fwk, .xmcd oder .mcdx</div>}

@@ -219,6 +219,7 @@ function Help() {
         <tr><td>Rechtsklick</td><td>Diagramm von f(x), Gleichung lösen, Wert anzeigen</td></tr>
         <tr><td>@ · $ · &amp;</td><td>Diagramm · Summe · Integral</td></tr>
         <tr><td>Strg+M</td><td>Matrix 3×3</td></tr>
+        <tr><td>Strg+F / Strg+H</td><td>Suchen / Ersetzen (F3: weiter)</td></tr>
         <tr><td>Strg+Z / Strg+Y</td><td>Rückgängig / Wiederholen</td></tr>
         <tr><td>Strg+C/X/V/D</td><td>Kopieren, Ausschneiden, Einfügen, Duplizieren</td></tr>
         <tr><td>Pfeiltasten</td><td>Auswahl oder Kreuz verschieben</td></tr>

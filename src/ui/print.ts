@@ -6,6 +6,7 @@
  */
 import { MARGIN, PAGE_H, PAGE_W, regionElements } from './layout';
 import { store } from './store';
+import { fillTemplate, headerFooter, pageVars } from '../engine/pageinfo';
 
 const TOP = 40;      // top margin on following pages
 const FOOT = 44;     // space reserved for the footer at the bottom of each page
@@ -77,18 +78,20 @@ export function preparePrint() {
   const wrap = pageEl.parentElement;
   wrapHeight = wrap?.style.height ?? '';
   if (wrap) { wrap.style.height = `${pages * PAGE_H}px`; wrap.style.position = 'relative'; }
-  // footer on every page
-  const title = s.ws.title || s.fileName || 'Arbeitsblatt';
-  const date = new Date().toLocaleDateString('de-DE');
+  // header and footer on every page (left, centre, right; placeholders filled per page)
+  const vars = pageVars(s.ws, s.fileName);
+  const hf = headerFooter(s.ws);
   for (let k = 0; k < pages; k++) {
-    const f = document.createElement('div');
-    f.className = 'print-footer';
-    f.style.cssText = `top:${(k + 1) * PAGE_H - 30}px;left:${MARGIN}px;width:${PAGE_W - 2 * MARGIN}px`;
-    const l = document.createElement('span'); l.textContent = `${title} · ${date}`;
-    const r = document.createElement('span'); r.textContent = `Seite ${k + 1} von ${pages}`;
-    f.append(l, r);
-    (wrap ?? pageEl).appendChild(f);
-    footers.push(f);
+    for (const [kind, parts] of [['footer', hf.footer], ['header', hf.header]] as const) {
+      const texts = parts.map(t => fillTemplate(t, vars, k + 1, pages));
+      if (texts.every(t => !t.trim())) continue;
+      const f = document.createElement('div');
+      f.className = `print-footer print-${kind}`;
+      f.style.cssText = `top:${kind === 'footer' ? (k + 1) * PAGE_H - 30 : k * PAGE_H + 14}px;left:${MARGIN}px;width:${PAGE_W - 2 * MARGIN}px`;
+      for (const t of texts) { const sp = document.createElement('span'); sp.textContent = t; f.appendChild(sp); }
+      (wrap ?? pageEl).appendChild(f);
+      footers.push(f);
+    }
   }
 }
 
