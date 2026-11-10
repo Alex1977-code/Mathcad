@@ -654,7 +654,7 @@ function definedNames(p: MathStmt): string[] {
 function usesFind(p: MathStmt): boolean {
   let found = false;
   const e = p.kind === 'define' || p.kind === 'eval' || p.kind === 'expr' ? p.expr : null;
-  if (e) walk(e, (x) => { if (x.k === 'call' && ['Find', 'find', 'Minerr'].includes(x.name)) found = true; });
+  if (e) walk(e, (x) => { if (x.k === 'call' && ['Find', 'find', 'Minerr', 'Odesolve', 'odesolve'].includes(x.name)) found = true; });
   return found;
 }
 

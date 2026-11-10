@@ -45,6 +45,8 @@ function chars(s: string, upright: boolean): string {
 
 export function nameLatex(name: string, ctx: LatexCtx = {}, opts: { upright?: boolean } = {}): string {
   if (name.startsWith("'")) return nameLatex(name.slice(1), { ...ctx, isUnit: () => true }, opts);
+  const pm = /^(.+?)('+)$/.exec(name);
+  if (pm) return `{${nameLatex(pm[1], ctx, opts)}${"'".repeat(pm[2].length)}}`;
   const i = name.indexOf('_');
   const isUnit = ctx.isUnit?.(name) ?? false;
   const upright = opts.upright || isUnit;

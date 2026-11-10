@@ -10,6 +10,7 @@ import { pnormStd } from './numeric';
 import { mkQ } from './quantity';
 import { math } from './units';
 import type { Evaluator } from './evaluator';
+import { interpRegress } from './fitting';
 
 type Builtin = (args: Val[], ev: Evaluator) => Val;
 
@@ -576,6 +577,12 @@ export const EXTRA_BUILTINS: Record<string, Builtin> = {
   interp: (args) => {
     nargs('interp', args, 4);
     const vs = nums(args[0], 'interp'), x = nums(args[1], 'interp'), y = els(args[2]);
+    // regress vector [3; 3; k; a0 … ak]: evaluate the polynomial (x and y are not needed)
+    if (vs[0] === 3 && vs[1] === 3 && vs.length === 4 + vs[2] && (vs[2] !== 3 || vs.length !== 3 + x.length)) {
+      const d = dimsOf(y[0]);
+      const g = (t: Val) => withDims(interpRegress(vs, si(t)), d);
+      return isMatrix(args[3]) ? makeMatrix(matrixRows(args[3] as Matrix).map(r => r.map(g))) : g(args[3]);
+    }
     if (vs[0] !== SPLINE_MARK) throw new CalcError('interp: erstes Argument muss aus lspline, pspline oder cspline stammen');
     const d = dimsOf(y[0]);
     const f = (t: Val) => withDims(interpSpline(vs, x, y.map(si), si(t)), d);

@@ -56,7 +56,11 @@ export function tokenize(src: string): Token[] {
         if (ch === '.' && src[i + 1] !== '.' && ID_CHAR.test(src[i + 1] ?? ' ') && src.slice(start, i).includes('_')) { i++; continue; }
         break;
       }
-      out.push({ t: 'id', v: src.slice(start, i), pos: start, end: i, spaceBefore: space });
+      // derivative notation of Odesolve: y'(t), y''(t) – primes directly followed by "("
+      let p = i;
+      while (src[p] === "'" || src[p] === '′') p++;
+      if (p > i && src[p] === '(') i = p;
+      out.push({ t: 'id', v: src.slice(start, i).replace(/′/g, "'"), pos: start, end: i, spaceBefore: space });
       space = false;
       continue;
     }
