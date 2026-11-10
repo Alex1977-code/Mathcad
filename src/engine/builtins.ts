@@ -11,6 +11,7 @@ import { hasOffset, mkQ, qSum, withValue } from './quantity';
 import { EXTRA_BUILTINS } from './builtins2';
 import { ODE_BUILTINS, ODE_LAZY } from './odeBuiltins';
 import { FIT_BUILTINS } from './fitting';
+import { FILE_BUILTINS } from './datafiles';
 import { brent, limitNumeric, pnormStd, qnormStd, rootFromGuess, solveSystem } from './numeric';
 import { DISTRIBUTIONS, distFunction, distRandom, gammaQ, lgamma, percentile, setStatsSeed } from './stats';
 
@@ -653,12 +654,20 @@ function erfc(x: number): number {
 }
 function siOrNum(v: Val): number { return isUnit(v) ? (v as Unit).value as number : toNumber(v); }
 function scaleLike(tmpl: Val, x: number): Val { return isUnit(tmpl) ? withValue(tmpl as Unit, x) : x; }
-function regress(args: Val[], what: 'slope' | 'intercept'): number {
-  const a = elements([args[0]]).map(x => toNumber(x)), b = elements([args[1]]).map(x => toNumber(x));
+function regress(args: Val[], what: 'slope' | 'intercept'): Val {
+  // with units: calculated in SI; slope has the unit y/x, intercept the unit of y
+  const ea = elements([args[0]]), eb = elements([args[1]]);
+  const si = (x: Val) => (isUnit(x) ? (x as Unit).value as number : toNumber(x));
+  const a = ea.map(si), b = eb.map(si);
   const n = a.length; const ma = a.reduce((x, y) => x + y, 0) / n, mb = b.reduce((x, y) => x + y, 0) / n;
   let sab = 0, saa = 0; for (let i = 0; i < n; i++) { sab += (a[i] - ma) * (b[i] - mb); saa += (a[i] - ma) ** 2; }
   const k = sab / saa;
-  return what === 'slope' ? k : mb - k * ma;
+  const ux = isUnit(ea[0]) ? math.unit(1, (ea[0] as Unit).toSI().formatUnits() || '') as Unit : null;
+  const uy = isUnit(eb[0]) ? math.unit(1, (eb[0] as Unit).toSI().formatUnits() || '') as Unit : null;
+  if (!ux && !uy) return what === 'slope' ? k : mb - k * ma;
+  if (what === 'intercept') return uy ? math.multiply(mb - k * ma, uy) as Unit : mb - k * ma;
+  const unit = uy && ux ? math.divide(uy, ux) : uy ?? math.divide(1, ux!);
+  return math.multiply(k, unit as Unit) as Val;
 }
 BUILTINS['Min'] = BUILTINS.min;
 
@@ -999,7 +1008,7 @@ export const BUILTIN_NAMES = [...Object.keys(BUILTINS), ...Object.keys(LAZY_BUIL
 export function isBuiltinFunction(name: string) { return name in BUILTINS || name in LAZY_BUILTINS; }
 
 // further Mathcad functions (interpolation, prediction, outlier tests, rank statistics …)
-Object.assign(BUILTINS, EXTRA_BUILTINS, ODE_BUILTINS, FIT_BUILTINS);
+Object.assign(BUILTINS, EXTRA_BUILTINS, ODE_BUILTINS, FIT_BUILTINS, FILE_BUILTINS);
 Object.assign(LAZY_BUILTINS, ODE_LAZY);
 
 // lookup tables without prototype: names like "toString" or "__proto__" are not functions/constants

@@ -7,6 +7,7 @@ import { store, useStore } from './store';
 import { PLOT_COLORS } from './regions/PlotRegionView';
 import { IconCheck, IconClose, IconPlus, IconTrash } from './icons';
 import { sortRegions } from '../engine/model';
+import { removeDataFile } from './actions';
 
 export type SideTab = 'vars' | 'problems' | 'outline' | 'format' | 'help';
 
@@ -100,7 +101,27 @@ function Variables({ result }: { result: ComputeResult | null }) {
           <span className="var-val" title={v.text}>{v.text}</span>
         </div>
       ))}
+      <DataFiles />
     </>
+  );
+}
+
+/** Data files attached to the document (read with READCSV, READPRN, READEXCEL). */
+function DataFiles() {
+  const files = useStore(s => s.ws.files);
+  return (
+    <div className="data-files">
+      <div className="panel-title small">Angehängte Dateien</div>
+      {!files?.length && <div className="empty-hint">Keine. CSV- oder Excel-Dateien auf das Blatt ziehen oder Einfügen → Daten.</div>}
+      {files?.map(f => (
+        <div key={f.name} className="data-file">
+          <span className="df-name" title={f.name}>{f.name}</span>
+          <span className="df-meta">{f.kind === 'xlsx' ? `${f.sheets?.length ?? 0} Blatt` : `${(f.text ?? '').split('\n').length} Zeilen`}</span>
+          <button className="df-copy" title="Lesebefehl in die Zwischenablage" onClick={() => navigator.clipboard?.writeText(`${f.kind === 'xlsx' ? 'READEXCEL' : /\.prn$/i.test(f.name) ? 'READPRN' : 'READCSV'}("${f.name}")`).catch(() => undefined)}>⧉</button>
+          <button className="df-del" title="Datei entfernen" onClick={() => { if (window.confirm(`„${f.name}“ aus dem Dokument entfernen?`)) removeDataFile(f.name); }}>×</button>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -180,6 +201,11 @@ const HELP: [string, string][] = [
   ['lim(sin(x)/x, x, 0) →', 'Grenzwert (auch ∞, "right"/"left", auch mit =)'],
   ['1/(x^2 - 1) → parfrac', 'Partialbruchzerlegung'],
   ['1/((x-a)*(x-b)) → parfrac, x', 'auch mit Buchstaben'],
+  ["Given  y'(t) == -y(t)  y(0) == 1", 'Differentialgleichung …'],
+  ['y := Odesolve(t, 10)', '… lösen, dann y(2) ='],
+  ['rkfixed(y0, 0, 1, 100, D)', 'Runge-Kutta, D(x, y) = Ableitungen'],
+  ['genfit(vx, vy, [1; 1], F)', 'Kurvenanpassung (auch linfit, expfit …)'],
+  ['READEXCEL("daten.xlsx", "A1:C9")', 'angehängte Datei lesen (auch READCSV)'],
   ['F_max', 'Index im Namen (Unterstrich)'],
   ['v[2]  A[1, 0]', 'Vektor-/Matrixelement (ORIGIN 0)'],
   ['[1, 2; 3, 4]', 'Matrix (, Spalten · ; Zeilen)'],

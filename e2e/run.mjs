@@ -359,6 +359,39 @@ try {
     ok(rec.some(n => /\.mcdx|\.xmcd|\.fwk/.test(n)), `Zuletzt verwendet im Datei-Menü (${rec.slice(0, 3).join(', ')})`);
   }
 
+  /* 12e · data table (paste from Excel), CSV file, differential equation */
+  {
+    await page.click('text=Datei'); await page.click('.menu >> text=Neu');
+    await page.waitForSelector('.welcome');
+    const pg = await page.locator('.page').boundingBox();
+    await page.mouse.click(pg.x + 60, pg.y + 60);
+    await page.keyboard.press('Control+k'); await page.waitForSelector('.palette input'); await page.locator('.palette input').fill('Datentabelle'); await page.locator('.palette input').press('Enter');
+    await page.waitForSelector('.table-region');
+    await page.evaluate(() => navigator.clipboard.writeText('t (s)\tF (kN)\n0\t1,5\n2\t2,5\n4\t4\n'));
+    await page.locator('.table-region input[data-cell="0:0"]').click();
+    await page.keyboard.press('Control+v');
+    await page.mouse.click(pg.x + 460, pg.y + 60);
+    await page.keyboard.type('mean(F)= kN'); await page.keyboard.press('Enter');
+    await page.waitForTimeout(400); await idle();
+    ok(/2\.667kN/.test((await lastRegionText()).replace(/\s+/g, '')), 'Datentabelle: aus Excel eingefügt, Spaltennamen und Einheiten erkannt, mean(F) = 2.667 kN');
+    // CSV dropped on the sheet: attached and read with READCSV
+    await page.mouse.click(pg.x + 60, pg.y + 360);
+    const csv = 'Zeit;Weg\n0;0\n1;4,9\n2;19,6\n';
+    const dt = await page.evaluateHandle((t) => { const d = new DataTransfer(); d.items.add(new File([t], 'fall.csv', { type: 'text/csv' })); return d; }, csv);
+    await page.dispatchEvent('.app', 'drop', { dataTransfer: dt });
+    await page.waitForTimeout(500);
+    await page.keyboard.type('fall[3,1]='); await page.keyboard.press('Enter');
+    await page.waitForTimeout(400); await idle();
+    const csvTxt = await lastRegionText();
+    ok(/19\.6/.test(csvTxt) && /READCSV/.test(await page.locator('.page').innerText()), `CSV-Datei per Drag & Drop angehängt und mit READCSV gelesen, Dezimalkomma (${csvTxt.replace(/\s+/g, '')})`);
+    // ODE: Given, y'(t) = −2·y(t), y(0) = 1, Odesolve
+    await page.mouse.click(pg.x + 60, pg.y + 470);
+    for (const t of ['Given', "y'(t)==-2*y(t)", 'y(0)==1', 'y:Odesolve(t,3)', 'y(1)=']) { await page.keyboard.type(t); await page.keyboard.press('Enter'); }
+    await page.waitForTimeout(400); await idle();
+    ok(/0\.135/.test(await lastRegionText()) && (await page.locator('.region.error').count()) === 0, 'Differentialgleichung mit Odesolve: y(1) = e⁻² = 0.135');
+    await shot('16-daten-dgl.png');
+  }
+
   /* 13 · responsiveness on a large imported sheet: an edit at the end is recalculated incrementally */
   {
     const fc = page.waitForEvent('filechooser');

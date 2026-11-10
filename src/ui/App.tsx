@@ -15,7 +15,7 @@ import { makeDocx, withLightTheme } from './exporters';
 import { installPrintHooks } from './print';
 import { exampleWorksheet } from './examples';
 import {
-  duplicateSelection, handleCopyEvent, handlePasteEvent, insertMatrix, recalcNow, selectAll, separateAll, setAppHandlers, setZoom, showSide, toggleAutoCalc,
+  duplicateSelection, handleCopyEvent, handlePasteEvent, insertDataFile, insertMatrix, isDataFile, recalcNow, selectAll, separateAll, setAppHandlers, setZoom, showSide, toggleAutoCalc,
   toggleSide, zoomBy,
 } from './actions';
 import { IconImport, IconMoon, IconPanel, IconRedo, IconSave, IconSun, IconUndo } from './icons';
@@ -248,6 +248,7 @@ export function App() {
     e.preventDefault();
     setDragOver(false);
     const f = e.dataTransfer.files?.[0];
+    if (f && isDataFile(f.name)) { insertDataFile(f).then(() => notify(`„${f.name}“ angehängt und eingelesen`)).catch(err => notify((err as Error).message, true)); return; }
     if (f) openFile(f);
   };
 

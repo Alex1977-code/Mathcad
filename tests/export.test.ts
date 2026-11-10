@@ -57,4 +57,14 @@ describe('Einfügen aus anderen Programmen', () => {
     expect(regs.map(r => r.type)).toEqual(['text', 'math', 'math']);
     expect(regs.map(r => r.y)).toEqual([...regs.map(r => r.y)].sort((a, b) => a - b));
   });
+
+  it('Datentabelle wird Word-Tabelle', async () => {
+    const ws = exampleWorksheet();
+    ws.regions = [{ id: 'tb', type: 'table', x: 48, y: 40, name: 'M', columns: [{ name: 't', unit: 's' }, { name: 'F' }], rows: [['0', '1,5'], ['2', '2.5']] }];
+    const zip = await JSZip.loadAsync(await (await buildDocx(ws, { mathLatex: () => '' })).arrayBuffer());
+    const doc = await zip.file('word/document.xml')!.async('string');
+    expect(doc).toContain('<w:tbl>');
+    expect(doc).toContain('t [s]');
+    expect((doc.match(/<w:tr>/g) ?? []).length).toBe(3);
+  });
 });

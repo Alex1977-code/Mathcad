@@ -28,8 +28,14 @@ function mathText(r: MathRegion): string {
   return /[=→]\s*$/.test(r.src) ? `${r.src} ${shown}` : r.src;
 }
 
+/** A data table as tab-separated text (pastes into Excel as cells). */
+function tableText(r: Region & { type: 'table' }): string {
+  const head = r.columns.map((c, j) => `${c.name ?? `Spalte ${j + 1}`}${c.unit ? ` [${c.unit}]` : ''}`).join('\t');
+  return [head, ...r.rows.filter(row => row.some(c => c?.trim())).map(row => r.columns.map((_, j) => row[j] ?? '').join('\t'))].join('\n');
+}
+
 export function regionsPlainText(regs: Region[]): string {
-  return regs.map(r => (r.type === 'math' ? mathText(r) : r.type === 'text' ? htmlToText(r.html) : '')).filter(Boolean).join('\n');
+  return regs.map(r => (r.type === 'math' ? mathText(r) : r.type === 'text' ? htmlToText(r.html) : r.type === 'table' ? tableText(r) : '')).filter(Boolean).join('\n');
 }
 
 /** HTML for the clipboard: Word equations (OMML) with a text fallback, text with formatting, pictures. */
@@ -43,6 +49,11 @@ export function regionsHtml(regs: Region[]): string {
       const omml = latexToOmml(latex).replace(/<w:rPr>.*?<\/w:rPr>/g, '');
       parts.push(`<p class=MsoNormal><!--[if gte msEquation 12]><m:oMathPara>${omml}</m:oMathPara><![endif]--><![if !msEquation]><span style="font-family:'Cambria Math',serif">${esc(mathText(r))}</span><![endif]></p>`);
     } else if (r.type === 'text') parts.push(`<div>${r.html}</div>`);
+    else if (r.type === 'table') {
+      const head = r.columns.map((c, j) => `<th>${esc(`${c.name ?? `Spalte ${j + 1}`}${c.unit ? ` [${c.unit}]` : ''}`)}</th>`).join('');
+      const body = r.rows.filter(row => row.some(c => c?.trim())).map(row => `<tr>${r.columns.map((_, j) => `<td>${esc(row[j] ?? '')}</td>`).join('')}</tr>`).join('');
+      parts.push(`<p><i>${esc(r.name)} :=</i></p><table border="1" cellspacing="0" cellpadding="3"><tr>${head}</tr>${body}</table>`);
+    }
     else if (r.type === 'image' && /^data:image\//.test(r.src)) parts.push(`<p><img src="${r.src}" width="${r.w ?? ''}" alt="${esc(r.alt ?? '')}"></p>`);
   }
   return `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns:m="http://schemas.microsoft.com/office/2004/12/omml" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"></head><body>${parts.join('\n')}</body></html>`;

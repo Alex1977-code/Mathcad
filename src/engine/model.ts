@@ -60,7 +60,26 @@ export interface ImageRegion extends RegionBase {
 
 export interface PageBreakRegion extends RegionBase { type: 'pagebreak' }
 
-export type Region = MathRegion | TextRegion | PlotRegion | ImageRegion | PageBreakRegion;
+/** Data table: defines the matrix `name` and one column vector per named column (as Prime's tables). */
+export interface TableRegion extends RegionBase {
+  type: 'table';
+  name: string;
+  columns: { name?: string; unit?: string }[];
+  /** Cell texts, row by row (numbers with point or comma; other texts become strings). */
+  rows: string[][];
+}
+
+export type Region = MathRegion | TextRegion | PlotRegion | ImageRegion | PageBreakRegion | TableRegion;
+
+/** Data file attached to the document (read by READCSV, READPRN, READEXCEL). */
+export interface DataFile {
+  name: string;
+  kind: 'text' | 'xlsx';
+  /** Text content (CSV, PRN, TXT). */
+  text?: string;
+  /** Parsed workbook: sheets with cell values (row by row). */
+  sheets?: { name: string; cells: (number | string | null)[][] }[];
+}
 
 export interface WorksheetSettings {
   decimals: number;
@@ -90,6 +109,8 @@ export interface Worksheet {
   settings: WorksheetSettings;
   /** Information about the imported source file. */
   source?: { kind: 'xmcd' | 'mcdx'; name: string; warnings: string[] };
+  /** Attached data files. */
+  files?: DataFile[];
 }
 
 export const DEFAULT_SETTINGS: WorksheetSettings = { decimals: 3, expThreshold: 7, origin: 0, fontSize: 15 };
@@ -219,6 +240,19 @@ export function normalizeWorksheet(raw: unknown): Worksheet {
         break;
       }
       case 'pagebreak': regions.push({ ...base, type: 'pagebreak' }); break;
+      case 'table': {
+        const cols = (Array.isArray(r.columns) ? r.columns : []).slice(0, 500).map(c0 => {
+          const c = (c0 && typeof c0 === 'object' ? c0 : {}) as Record<string, unknown>;
+          const out: { name?: string; unit?: string } = {};
+          const n = str(c.name, 100), u = str(c.unit, 100);
+          if (n) out.name = n;
+          if (u) out.unit = u;
+          return out;
+        });
+        const rows = (Array.isArray(r.rows) ? r.rows : []).slice(0, 100000).map(row => (Array.isArray(row) ? row.slice(0, 500).map(c => (typeof c === 'number' ? String(c) : str(c, 1000) ?? '')) : []));
+        regions.push({ ...base, type: 'table', name: str(r.name, 100) ?? 'T', columns: cols.length ? cols : [{}], rows });
+        break;
+      }
       default: break;
     }
   }
@@ -228,6 +262,27 @@ export function normalizeWorksheet(raw: unknown): Worksheet {
     if (src.kind === 'xmcd' || src.kind === 'mcdx') {
       ws.source = { kind: src.kind, name: str(src.name, 300) ?? '', warnings: Array.isArray(src.warnings) ? src.warnings.filter(w => typeof w === 'string').slice(0, 500) as string[] : [] };
     }
+  }
+  if (Array.isArray(o.files)) {
+    let budget = 50e6;
+    const files: DataFile[] = [];
+    for (const f0 of o.files.slice(0, 100)) {
+      if (!f0 || typeof f0 !== 'object') continue;
+      const f = f0 as Record<string, unknown>;
+      const name = str(f.name, 300);
+      if (!name) continue;
+      if (f.kind === 'text' && typeof f.text === 'string' && f.text.length <= budget) { budget -= f.text.length; files.push({ name, kind: 'text', text: f.text }); }
+      else if (f.kind === 'xlsx' && Array.isArray(f.sheets)) {
+        const sheets = f.sheets.slice(0, 100).filter(s => s && typeof s === 'object').map(s0 => {
+          const s = s0 as Record<string, unknown>;
+          const cells = (Array.isArray(s.cells) ? s.cells : []).slice(0, 1e5).map(row => (Array.isArray(row) ? row.slice(0, 2000).map(c => (typeof c === 'number' && Number.isFinite(c) ? c : typeof c === 'string' ? c.slice(0, 1000) : null)) : []));
+          budget -= cells.reduce((n, r) => n + r.length * 8, 0);
+          return { name: str(s.name, 100) ?? 'Tabelle1', cells };
+        });
+        if (budget > 0) files.push({ name, kind: 'xlsx', sheets });
+      }
+    }
+    if (files.length) ws.files = files;
   }
   return ws;
 }

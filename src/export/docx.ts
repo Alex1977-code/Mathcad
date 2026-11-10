@@ -155,7 +155,7 @@ export async function buildDocx(ws: Worksheet, opts: DocxOptions): Promise<Blob>
   const rows: Region[][] = [];
   for (const r of regions) {
     const last = rows[rows.length - 1];
-    if (last && r.type !== 'pagebreak' && last[0].type !== 'pagebreak' && Math.abs(r.y - last[0].y) < 14 && r.type !== 'text' && last.every(q => q.type !== 'text')) last.push(r);
+    if (last && r.type !== 'pagebreak' && last[0].type !== 'pagebreak' && Math.abs(r.y - last[0].y) < 14 && r.type !== 'text' && r.type !== 'table' && last.every(q => q.type !== 'text' && q.type !== 'table')) last.push(r);
     else rows.push([r]);
   }
 
@@ -168,6 +168,20 @@ export async function buildDocx(ws: Worksheet, opts: DocxOptions): Promise<Blob>
     prevBottom = Math.max(...row.map(r => r.y + (r.h ?? 28)));
     const spacing = `<w:spacing w:before="${gap}" w:after="0"/>`;
     if (r0.type === 'pagebreak') { body.push('<w:p><w:r><w:br w:type="page"/></w:r></w:p>'); continue; }
+    if (r0.type === 'table') {
+      // Word table: header with column names [units], then the values
+      const cols = r0.columns;
+      const rows = r0.rows.filter(row => row.some(c => c?.trim()));
+      const border = '<w:tblBorders>' + ['top', 'left', 'bottom', 'right', 'insideH', 'insideV'].map(b => `<w:${b} w:val="single" w:sz="4" w:space="0" w:color="BFBFBF"/>`).join('') + '</w:tblBorders>';
+      const cell = (t: string, head = false) => `<w:tc><w:tcPr>${head ? '<w:shd w:val="clear" w:color="auto" w:fill="F2F4F7"/>' : ''}</w:tcPr><w:p><w:pPr><w:jc w:val="${head ? 'center' : 'right'}"/></w:pPr>${runXml(t, head ? { b: true } : {})}</w:p></w:tc>`;
+      const head = `<w:tr>${cols.map((c, j) => cell(`${c.name ?? `Spalte ${j + 1}`}${c.unit ? ` [${c.unit}]` : ''}`, true)).join('')}</w:tr>`;
+      const tbody = rows.map(row => `<w:tr>${cols.map((_, j) => cell(row[j] ?? '')).join('')}</w:tr>`).join('');
+      const indent = Math.max(0, (r0.x - PAGE_MARGIN_PX) * TW);
+      const caption = `<w:p><w:pPr>${spacing}${indent ? `<w:ind w:left="${indent}"/>` : ''}</w:pPr>${runXml(`${r0.name} :=`, { i: true })}</w:p>`;
+      const tbl = `<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/>${indent ? `<w:tblInd w:w="${indent}" w:type="dxa"/>` : ''}${border}</w:tblPr><w:tblGrid>${cols.map(() => '<w:gridCol w:w="1400"/>').join('')}</w:tblGrid>${head}${tbody}</w:tbl>`;
+      body.push(caption + tbl);
+      continue;
+    }
     if (r0.type === 'text') {
       const paras = htmlToParagraphs(r0.html);
       const indent = Math.max(0, (r0.x - PAGE_MARGIN_PX) * TW);

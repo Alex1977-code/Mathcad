@@ -4,7 +4,7 @@ import { renderLatex } from './katex';
 import { RecentList } from './RecentList';
 import { store, useStore, readPref, writePref } from './store';
 import {
-  alignSelection, app, canPaste, changeDecimals, copySelection, deleteSelection, duplicateSelection, insertImage, insertMatrix,
+  alignSelection, app, canPaste, changeDecimals, copySelection, deleteSelection, duplicateSelection, insertDataFile, insertImage, insertMatrix, insertTable,
   insertRegion, insertSnippet, paste, recalcNow, separateAll, setZoom, showSide, toggleAutoCalc, toggleDefValues, toggleDisabled, toggleGrid,
   toggleSide, zoomBy, zoomPageWidth,
 } from './actions';
@@ -156,6 +156,10 @@ export function Ribbon() {
               <Big icon={<IconMath />} label="Formel" title="Formel einfügen – oder einfach aufs Blatt klicken und tippen" onClick={() => insertRegion('math')} />
               <Big icon={<IconText />} label="Text" title="Textbereich einfügen (Taste &quot;)" onClick={() => insertRegion('text')} />
               <Big icon={<IconChart />} label="Diagramm" title="X-Y-Diagramm einfügen" onClick={() => insertRegion('plot')} />
+              <Stack>
+                <Small icon={<span className="ico-text">▦</span>} label="Tabelle" title="Datentabelle einfügen (Werte direkt eingeben oder aus Excel einfügen)" onClick={() => insertTable()} />
+                <Small icon={<span className="ico-text">⇪</span>} label="Daten" title="CSV- oder Excel-Datei einlesen (READCSV / READEXCEL) – oder Datei aufs Blatt ziehen" onClick={() => { void insertDataFile(); }} />
+              </Stack>
               <Stack>
                 <Small icon={<IconImage />} label="Bild" title="Bild einfügen" onClick={insertImage} />
                 <Small icon={<IconBreak />} label="Seitenumbruch" title="Seitenumbruch einfügen" onClick={() => insertRegion('pagebreak')} />

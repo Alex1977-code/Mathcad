@@ -11,9 +11,10 @@ import {
 } from './values';
 import { escapeText, formatValue, formatReal, type FormatOptions, siUnitFactors, unitFactorsText } from './format';
 import { stmtLatex, toLatex, type LatexCtx } from './latex';
-import { sortRegions, type MathRegion, type PlotRegion, type Region, type Worksheet } from './model';
+import { sortRegions, type MathRegion, type PlotRegion, type Region, type TableRegion, type Worksheet } from './model';
 import { checkResult, expectedToText, type CheckStatus } from './verify';
 import { symbolicEval } from './symbolic';
+import { cellValue, setDataFiles } from './datafiles';
 import { toText } from './serialize';
 
 export interface RegionError { message: string; culprit?: string; pos?: number; end?: number; kind: 'parse' | 'calc' }
@@ -203,6 +204,7 @@ export class WorksheetEngine {
   /** Pass 2: evaluate one region in worksheet order. */
   step(r: Region, parsed: (r: MathRegion) => MathStmt | ParseError, globalResults: Record<string, RegionResult>): RegionResult | undefined {
     if (r.type === 'plot') return { id: r.id, plot: this.runPlot(r) };
+    if (r.type === 'table') return this.runTable(r);
     if (r.type !== 'math') return undefined;
     // imported formula that could not be converted, but has a result stored by Mathcad: counts as not reproduced
     if (r.disabled && r.imported?.original && r.imported.expected) {
@@ -270,6 +272,35 @@ export class WorksheetEngine {
 
   compute(): ComputeResult {
     return new ComputeSession(this.opts).runToEnd(this.ws);
+  }
+
+  /* ------------------------------ tables ------------------------------- */
+
+  /** Data table: the matrix `name` and one column vector per named column; units per column. */
+  runTable(r: TableRegion): RegionResult {
+    const res: RegionResult = { id: r.id, kind: 'define', defines: r.name };
+    const ident = /^[\p{L}_][\p{L}\p{N}_.]*$/u;
+    try {
+      if (!ident.test(r.name)) throw new CalcError(`Ungültiger Tabellenname „${r.name}“`);
+      const units = r.columns.map(c => (c.unit?.trim() ? this.ev.eval(parseExpression(c.unit), this.top) : undefined));
+      const rows = r.rows.slice();
+      while (rows.length && rows[rows.length - 1].every(c => !c?.trim())) rows.pop();
+      if (!rows.length) throw new CalcError('Die Tabelle ist leer');
+      const ncol = r.columns.length;
+      const vals: Val[][] = rows.map(row => Array.from({ length: ncol }, (_, j) => {
+        const text = row[j] ?? '';
+        const v = cellValue(text, /,\d/.test(text) && !/\.\d/.test(text));
+        if (typeof v === 'string') return v;
+        return units[j] !== undefined ? this.ev.multiply(v, units[j]!, false) : v;
+      }));
+      this.top.set(r.name, makeMatrix(vals));
+      r.columns.forEach((c, j) => { if (c.name && ident.test(c.name)) this.top.set(c.name, makeMatrix(vals.map(row => [row[j]]))); });
+      res.resultText = `${vals.length}×${ncol}`;
+    } catch (e) {
+      const err = translateError(e);
+      res.error = { message: err.message, kind: 'calc' };
+    }
+    return res;
   }
 
   /* ------------------------------ math -------------------------------- */
@@ -673,6 +704,23 @@ export interface EngineSnapshot {
 
 export interface Progress { done: number; total: number; resumedAt: number }
 
+const filesKeys = new WeakMap<object, string>();
+/** Fingerprint of the attached data files (a change recalculates everything). */
+function filesKey(files: Worksheet['files']): string {
+  if (!files) return '';
+  let k = filesKeys.get(files);
+  if (k === undefined) {
+    k = files.map(f => {
+      const body = f.text ?? JSON.stringify(f.sheets ?? []);
+      let h = 0;
+      for (let i = 0; i < body.length; i += Math.max(1, Math.floor(body.length / 4096))) h = (h * 31 + body.charCodeAt(i)) | 0;
+      return `${f.name}:${body.length}:${h}`;
+    }).join('|');
+    filesKeys.set(files, k);
+  }
+  return k;
+}
+
 /** Everything a region's result depends on besides the state before it. */
 function signature(r: Region): string {
   const { x: _x, y: _y, oy: _oy, w, h, ...rest } = r as Region & { oy?: number };
@@ -777,7 +825,8 @@ export class ComputeSession {
       const p = this.parse(r);
       return !(p instanceof ParseError) && p.kind === 'define' && p.global;
     }).map(signature).join('\n');
-    const keys = JSON.stringify(ws.settings) + '\u0000' + globals;
+    setDataFiles(ws.files);
+    const keys = JSON.stringify(ws.settings) + '\u0000' + globals + '\u0000' + filesKey(ws.files);
 
     // first region that differs from the previous run
     let k = 0;

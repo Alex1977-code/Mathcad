@@ -15,6 +15,7 @@ import { lookupUnit } from '../engine/units';
 import { APP_XML, CALCULATION_XML, PRESENTATION_XML } from './mcdxTemplate';
 import type { ComputeResult } from '../engine/worksheet';
 import { headerFooter, pageVars, templateParts } from '../engine/pageinfo';
+import { cellValue } from '../engine/datafiles';
 
 const NS_WS = 'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:ve="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:ws="http://schemas.mathsoft.com/worksheet50" xmlns:ml="http://schemas.mathsoft.com/math50" xmlns:u="http://schemas.mathsoft.com/units10" xmlns:p="http://schemas.mathsoft.com/provenance10" xmlns="http://schemas.mathsoft.com/worksheet50"';
 const XAML_NS = 'http://schemas.microsoft.com/winfx/2006/xaml/presentation';
@@ -426,6 +427,34 @@ export async function buildMcdx(ws: Worksheet, opts: McdxOptions = {}): Promise<
         const traces = r.traces.map(t => `${t.y} über ${t.x}`).join('; ');
         warnings.push(`Diagramm als Hinweistext übernommen (${traces || 'leer'}) – in Mathcad neu einfügen`);
         out.push(await textRegion(r, `<i>[Diagramm aus FormelWerk: ${esc(traces)}]</i>`));
+        break;
+      }
+      case 'table': {
+        // Prime: the table as a matrix definition, the named columns as column vectors next to it
+        const cols = r.columns;
+        const rows = r.rows.filter(row => row.some(c => c?.trim()));
+        if (!rows.length) break;
+        const units = cols.map(c => { try { return c.unit?.trim() ? parseExpression(c.unit, false) : undefined; } catch { return undefined; } });
+        const cellNode = (t: string, j: number): Node => {
+          const v = cellValue(t ?? '', /,\d/.test(t ?? '') && !/\.\d/.test(t ?? ''));
+          if (typeof v === 'string') return { k: 'str', v };
+          const n: Node = Number.isNaN(v) ? { k: 'id', name: 'NaN' } : v < 0 ? { k: 'un', op: 'neg', a: { k: 'num', v: -v } } : { k: 'num', v };
+          return units[j] ? { k: 'bin', op: '*', a: n, b: units[j]!, implicit: true } : n;
+        };
+        ctx.defined.add(r.name);
+        const mat: Node = { k: 'matrix', rows: rows.map(row => cols.map((_, j) => cellNode(row[j], j))) };
+        const xml = mathXml({ kind: 'define', target: { name: r.name }, global: false, expr: mat }, ctx);
+        const ref = resultId++;
+        results.push(`<resultData result-id="${ref}" calculation-status="Pending"><ml:result /></resultData>`);
+        out.push(`<region ${geom({ ...r, w: 60 + 70 * cols.length, h: 24 * (rows.length + 1) })}><math resultRef="${ref}">${xml}</math></region>`);
+        cols.forEach((c, j) => {
+          if (!c.name || !/^[\p{L}_][\p{L}\p{N}_.]*$/u.test(c.name)) return;
+          ctx.defined.add(c.name);
+          const def = mathXml({ kind: 'define', target: { name: c.name }, global: false, expr: { k: 'col', a: { k: 'id', name: r.name }, j: { k: 'num', v: j + (ws.settings.origin ?? 0) } } }, ctx);
+          const ref2 = resultId++;
+          results.push(`<resultData result-id="${ref2}" calculation-status="Pending"><ml:result /></resultData>`);
+          out.push(`<region ${geom({ ...r, x: r.x + 80 + 70 * cols.length, y: r.y + 30 * j, w: 120, h: 26 })}><math resultRef="${ref2}">${def}</math></region>`);
+        });
         break;
       }
       case 'pagebreak': out.push(`<region region-id="${regionId++}" height="2" actualWidth="793.7" actualHeight="2" top="${r.y.toFixed(3)}" left="0"><pageBreak /></region>`); break;

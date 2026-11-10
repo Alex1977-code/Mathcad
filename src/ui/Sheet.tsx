@@ -6,6 +6,7 @@ import { MARGIN, PAGE_H, PAGE_W, regionElements, snap } from './layout';
 import { MathRegionView } from './regions/MathRegionView';
 import { TextRegionView } from './regions/TextRegionView';
 import { PlotRegionView } from './regions/PlotRegionView';
+import { TableRegionView } from './regions/TableRegionView';
 import { insertSnippet, newMathRegion } from './actions';
 import { quickPlotAtCursor } from './smart';
 import { RecentList } from './RecentList';
@@ -278,7 +279,7 @@ export function Sheet({ result, onOpenExample, onImport, pending }: Props) {
               const res = results[r.id];
               const sel = selSet.has(r.id);
               const ed = editing === r.id;
-              const err = r.type === 'math' && !!res?.error && !ed;
+              const err = (r.type === 'math' || r.type === 'table') && !!res?.error && !ed;
               const cls = ['region', `${r.type}-region`, sel ? 'selected' : '', ed ? 'editing' : '', err ? 'error' : '',
                 r.type === 'math' && r.disabled ? 'disabled-calc' : '', pending?.has(r.id) && !ed ? 'pending' : ''].filter(Boolean).join(' ');
               return (
@@ -315,6 +316,7 @@ export function Sheet({ result, onOpenExample, onImport, pending }: Props) {
                       {r.alt && /Mathcad/.test(r.alt) && <div className="caption">{r.alt}</div>}
                     </div>
                   )}
+                  {r.type === 'table' && <TableRegionView region={r} result={res} />}
                   {r.type === 'pagebreak' && <span>Seitenumbruch</span>}
                 </div>
               );

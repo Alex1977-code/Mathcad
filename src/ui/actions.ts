@@ -2,11 +2,12 @@
  * Central command registry: used by the ribbon, the context menu, the command palette and the
  * keyboard shortcuts, so every function is reachable in the same way everywhere.
  */
-import { newId, sortRegions, type MathRegion, type Region } from '../engine/model';
+import { newId, sortRegions, type DataFile, type MathRegion, type Region } from '../engine/model';
 import { store, writePref } from './store';
 import { getActiveEditor } from './editing';
 import { MARGIN, regionElements, separateRegions, snap } from './layout';
 import { pickFile } from './files';
+import { parseDelimited } from '../engine/datafiles';
 import { quickPlotAtCursor } from './smart';
 import { cursorOrDefault, imageRegionFromFile, insertForeign, regionsFromText, regionsHtml, regionsPlainText } from './clipboard';
 
@@ -42,6 +43,62 @@ export function insertRegion(kind: 'math' | 'text' | 'plot' | 'pagebreak', at?: 
     store.addRegion({ id: newId(), type: 'pagebreak', x: 0, y: cur.y });
     store.set({ cursor: { x: cur.x, y: cur.y + 30 } });
   }
+}
+
+/** Data table at the cursor (Mathcad Prime: Tabelle). */
+export function insertTable(at?: { x: number; y: number }, init?: Partial<Region & { type: 'table' }>) {
+  const s = store.get();
+  const cur = at ?? s.cursor ?? { x: MARGIN, y: MARGIN };
+  const used = new Set(s.ws.regions.filter(r => r.type === 'table').map(r => (r as { name: string }).name));
+  let name = 'T';
+  for (let k = 1; used.has(name); k++) name = `T${k}`;
+  const r: Region = { id: newId(), type: 'table', x: cur.x, y: cur.y, name, columns: [{ name: 'x' }, { name: 'y' }], rows: Array.from({ length: 4 }, () => ['', '']), ...init } as Region;
+  store.addRegion(r);
+  store.set({ cursor: { x: cur.x, y: snap(cur.y + 60 + 26 * ((r as { rows: unknown[] }).rows.length + 1)) } });
+}
+
+const DATA_EXT = /\.(csv|txt|prn|dat|tsv|xlsx)$/i;
+export const isDataFile = (name: string) => DATA_EXT.test(name);
+
+/** Attach a data file (CSV, PRN, TXT, XLSX) to the document; the same name replaces the old file. */
+export async function attachDataFile(file: File): Promise<DataFile> {
+  let df: DataFile;
+  if (/\.xlsx$/i.test(file.name)) {
+    const { readXlsx } = await import('../import/xlsx');
+    df = await readXlsx(file.name, await file.arrayBuffer());
+  } else {
+    if (file.size > 20e6) throw new Error('Datei zu groß (höchstens 20 MB)');
+    df = { name: file.name, kind: 'text', text: await file.text() };
+  }
+  store.updateWs(ws => ({ ...ws, files: [...(ws.files ?? []).filter(f => f.name.toLowerCase() !== file.name.toLowerCase()), df] }));
+  return df;
+}
+
+/** Read a data file into the worksheet: attached, plus a formula M := READCSV("…") / READEXCEL("…") at the cursor. */
+export async function insertDataFile(file?: File | null, asTable = false) {
+  const f = file ?? await pickFile('.csv,.txt,.prn,.dat,.tsv,.xlsx');
+  if (!f) return;
+  const df = await attachDataFile(f);
+  const s = store.get();
+  const cur = s.cursor ?? { x: MARGIN, y: MARGIN };
+  const base = f.name.replace(/\.[^.]+$/, '').replace(/[^\p{L}\p{N}_]/gu, '_').replace(/^(\d)/, '_$1') || 'Daten';
+  if (asTable) {
+    const cells = df.kind === 'xlsx' ? df.sheets![0].cells.map(r => r.map(c => (c === null ? '' : String(c)))) : parseDelimited(df.text ?? '').map(r => r.map(c => (typeof c === 'number' && Number.isNaN(c) ? '' : String(c))));
+    const head = cells[0] ?? [];
+    const named = head.length > 0 && head.every(c => c && !/^[+-]?[\d.,]+$/.test(c));
+    const body = (named ? cells.slice(1) : cells).slice(0, 5000);
+    const width = Math.max(1, ...cells.map(r => r.length));
+    const columns = Array.from({ length: width }, (_, j) => (named && head[j] ? { name: head[j].replace(/[^\p{L}\p{N}_]/gu, '_').replace(/^(\d)/, '_$1') } : {}));
+    insertTable(cur, { name: base, columns, rows: [...body.map(r => Array.from({ length: width }, (_, j) => r[j] ?? '')), Array(width).fill('')] } as never);
+    return;
+  }
+  const fn = df.kind === 'xlsx' ? 'READEXCEL' : /\.prn$/i.test(f.name) ? 'READPRN' : 'READCSV';
+  store.addRegion(newMathRegion(cur.x, cur.y, `${base} := ${fn}("${f.name}")`));
+  store.set({ cursor: { x: cur.x, y: snap(cur.y + 40) } });
+}
+
+export function removeDataFile(name: string) {
+  store.updateWs(ws => ({ ...ws, files: (ws.files ?? []).filter(f => f.name !== name) }));
 }
 
 /** Insert a matrix template with the given size. */
@@ -284,6 +341,9 @@ export function commands(): Command[] {
     { id: 'math', group: 'Einfügen', label: 'Formel', keys: 'Tippen', run: () => insertRegion('math') },
     { id: 'text', group: 'Einfügen', label: 'Textbereich', keys: '"', run: () => insertRegion('text'), tags: 'notiz beschreibung' },
     { id: 'plot', group: 'Einfügen', label: 'X-Y-Diagramm', keys: '@', run: () => quickPlotAtCursor(), tags: 'diagramm plot graph kurve' },
+    { id: 'table', group: 'Einfügen', label: 'Datentabelle', run: () => insertTable(), tags: 'tabelle daten messwerte excel' },
+    { id: 'datafile', group: 'Einfügen', label: 'Datei einlesen (CSV, Excel) …', run: () => { void insertDataFile(); }, tags: 'csv excel xlsx prn import daten readexcel readcsv' },
+    { id: 'datatable', group: 'Einfügen', label: 'Datei als Datentabelle einfügen …', run: () => { void insertDataFile(null, true); }, tags: 'csv excel xlsx tabelle import' },
     { id: 'image', group: 'Einfügen', label: 'Bild …', run: () => insertImage() },
     { id: 'pagebreak', group: 'Einfügen', label: 'Seitenumbruch', run: () => insertRegion('pagebreak') },
     { id: 'matrix', group: 'Einfügen', label: 'Matrix 3×3', keys: 'Strg+M', run: () => insertMatrix(3, 3) },

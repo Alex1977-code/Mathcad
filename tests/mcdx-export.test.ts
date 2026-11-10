@@ -97,4 +97,13 @@ describe('Export nach Mathcad Prime (.mcdx)', () => {
     expect(ws.settings.page?.header?.[0]).toMatch(/Author: John Smith/);
     expect(ws.settings.page?.footer?.[2]).toBe('Page {seite} of {seiten}');
   });
+
+  it('Datentabelle wird Matrix-Definition mit Spaltenvektoren', async () => {
+    const ws = sheet(['mean(F) =']);
+    ws.regions.unshift({ id: 'tb', type: 'table', x: 48, y: 0, name: 'M', columns: [{ name: 't', unit: 's' }, { name: 'F', unit: 'kN' }], rows: [['0', '1,5'], ['2', '2.5'], ['', '']] });
+    const { back, warnings } = await roundTrip(ws);
+    expect(warnings).toEqual([]);
+    expect(shown(back)).toEqual(shown(ws));
+    expect(shown(back)).toEqual(['2000 N']);
+  });
 });

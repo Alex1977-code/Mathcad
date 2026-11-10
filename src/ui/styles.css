@@ -657,3 +657,33 @@ button.status-item:hover { background: var(--bg-hover); }
 .recent.compact { margin: 0; max-width: none; }
 .recent-empty { font-size: 12px; color: var(--text-faint); padding: 4px 10px; }
 .menu button.recent-clear { font-size: 12px; color: var(--text-soft); }
+
+/* data table */
+.table-region { font-size: 13px; }
+.table-region .tr-head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+.table-region input.tr-name { width: 90px; text-align: left; font: italic 15px "KaTeX_Math", "Times New Roman", serif; border: 1px solid transparent; background: transparent; color: var(--text); padding: 1px 3px; border-radius: 4px; }
+.table-region .tr-name:hover, .table-region .tr-name:focus { border-color: var(--border); outline: none; }
+.table-region .tr-def { color: var(--text-soft); }
+.table-region .tr-meta { color: var(--text-faint); font-size: 11.5px; }
+.table-region table { border-collapse: collapse; background: var(--bg); }
+.table-region th, .table-region td { border: 1px solid var(--border); padding: 0; position: relative; }
+.table-region th { background: var(--bg-sunken); font-weight: 600; }
+.table-region input { border: 0; background: transparent; color: var(--text); font: inherit; font-variant-numeric: tabular-nums; width: 78px; padding: 3px 6px; text-align: right; }
+.table-region th input { text-align: center; display: block; width: 78px; }
+.table-region th .tr-unit { font-weight: 400; color: var(--text-soft); font-size: 11.5px; padding-top: 0; }
+.table-region input:focus { outline: 2px solid var(--accent); outline-offset: -2px; background: var(--accent-soft); }
+.table-region .tr-idx { color: var(--text-faint); font-size: 11px; text-align: right; padding: 0 5px; min-width: 22px; border: 0; background: transparent; white-space: nowrap; }
+.table-region .tr-del { position: absolute; top: 1px; right: 1px; border: 0; background: transparent; color: var(--text-faint); cursor: pointer; font-size: 12px; line-height: 1; padding: 1px 3px; opacity: 0; }
+.table-region th:hover .tr-del, .table-region td.tr-idx:hover .tr-del { opacity: 1; }
+.table-region td.tr-idx .tr-del { position: static; }
+.table-region td.tr-idx:hover span { display: none; }
+.table-region .tr-add, .table-region .tr-add button { border: 0; background: transparent; }
+.table-region .tr-add button, .table-region .tr-addrow { color: var(--accent); cursor: pointer; font-size: 12px; padding: 2px 6px; border: 0; background: transparent; }
+.table-region tbody tr:last-child td { border: 0; }
+@media print { .table-region .tr-del, .table-region .tr-add, .table-region .tr-addrow { display: none !important; } .table-region input::placeholder { color: transparent; } }
+.data-files { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 10px; }
+.data-file { display: flex; align-items: center; gap: 6px; padding: 4px 2px; font-size: 12.5px; }
+.data-file .df-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 550; }
+.data-file .df-meta { color: var(--text-faint); font-size: 11.5px; }
+.data-file button { border: 0; background: transparent; color: var(--text-soft); cursor: pointer; padding: 2px 5px; border-radius: 5px; }
+.data-file button:hover { background: var(--accent-soft); }
