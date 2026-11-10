@@ -110,7 +110,10 @@ export function toLatex(n: Node, ctx: LatexCtx = {}): string {
     case 'un':
       switch (n.op) {
         // a fraction bar groups by itself: -b/a needs no parentheses
-        case 'neg': return n.a.k === 'bin' && n.a.op === '/' ? `-${L(n.a)}` : `-${wrap(n.a, 7)}`;
+        case 'neg': {
+          const inner = n.a.k === 'paren' && n.a.a.k === 'bin' && n.a.a.op === '/' ? n.a.a : n.a;
+          return inner.k === 'bin' && inner.op === '/' ? `-${L(inner)}` : `-${wrap(n.a, 7)}`;
+        }
         case 'not': return `\\neg ${wrap(n.a, 3)}`;
         case 'fact': return `${wrap(n.a, 10)}!`;
         case 'pct': return `${wrap(n.a, 10)}\\%`;

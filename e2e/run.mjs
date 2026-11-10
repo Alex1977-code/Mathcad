@@ -333,7 +333,7 @@ try {
     await page.keyboard.press('Control+z');
     await page.locator('.findbar input').first().press('Escape');
     // header / footer
-    await page.keyboard.press('Control+k'); await page.waitForTimeout(150); await page.keyboard.type('Kopf- und'); await page.keyboard.press('Enter');
+    await page.keyboard.press('Control+k'); await page.waitForSelector('.palette input'); await page.locator('.palette input').fill('Kopf- und'); await page.waitForTimeout(100); await page.locator('.palette input').press('Enter');
     await page.waitForSelector('.page-setup');
     await page.locator('.page-setup input').nth(1).fill('Halle 3');
     await page.locator('.page-setup .ps-row').first().locator('input').first().fill('Projekt {projekt}');
@@ -347,7 +347,7 @@ try {
     // Mathcad export: valid package with Prime math XML, readable again
     const JSZip = require('jszip');
     const dlm = page.waitForEvent('download');
-    await page.keyboard.press('Control+k'); await page.waitForTimeout(150); await page.keyboard.type('Mathcad-Prime-Datei'); await page.keyboard.press('Enter');
+    await page.keyboard.press('Control+k'); await page.waitForSelector('.palette input'); await page.locator('.palette input').fill('Mathcad-Prime-Datei'); await page.waitForTimeout(100); await page.locator('.palette input').press('Enter');
     const mz = await JSZip.loadAsync(readFileSync(await (await dlm).path()));
     const wsx = await mz.file('mathcad/worksheet.xml').async('string');
     ok(/<ml:define>/.test(wsx) && /<solveblock>/.test(wsx) && /<xyPlot>/.test(wsx), 'Export nach Mathcad Prime: Formeln, Solve-Block und Diagramm im Prime-Format');

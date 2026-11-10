@@ -1,6 +1,6 @@
 /** Import of Mathcad Prime worksheets (.mcdx, Open Packaging Convention ZIP). */
 import JSZip from 'jszip';
-import { emptyWorksheet, newId, type PlotTrace, type Region, type Worksheet } from '../engine/model';
+import { emptyWorksheet, newId, type PageInfo, type PlotTrace, type Region, type Worksheet } from '../engine/model';
 import { toText } from '../engine/serialize';
 import { collectDefinedNames, convertExpr, kids, local, child, prepareNames, resetNameRegistry, type ConvertCtx } from './mathml';
 import { alignStyle, bytesToBase64, coord, defaultXmlParser, pushMath, escapeHtml, imageMime, mathRegionFrom, type XmlParser } from './common';
@@ -229,7 +229,64 @@ export async function importMcdx(data: ArrayBuffer | Uint8Array, name: string, p
   if (ctx.unknown.size) warnings.push(`Nicht unterstützte Mathcad-Elemente: ${[...ctx.unknown].join(', ')}`);
   ws.regions = regions;
   ws.source = { kind: 'mcdx', name, warnings };
+  // header, footer, author and project
+  try {
+    const page = await readHeaderFooter(zip, parseXml);
+    if (page) ws.settings.page = page;
+  } catch { warnings.push('Kopf-/Fußzeile nicht lesbar – ausgelassen'); }
   return ws;
+}
+
+/**
+ * Prime header/footer regions → left/centre/right templates (by position); the page number field's
+ * template ("Page_@PageNo_of_@PagesTotal") becomes "Page {seite} of {seiten}".
+ */
+async function readHeaderFooter(zip: JSZip, parseXml: XmlParser): Promise<PageInfo | null> {
+  const strip = (s: string) => s.replace(/^\uFEFF/, '');
+  const page: PageInfo = {};
+  const core = zip.file('docProps/core.xml');
+  if (core) {
+    const cdoc = parseXml(strip(await core.async('string')));
+    const creator = cdoc.getElementsByTagNameNS('*', 'creator')[0]?.textContent?.trim();
+    const subject = cdoc.getElementsByTagNameNS('*', 'subject')[0]?.textContent?.trim();
+    if (creator) page.author = creator.slice(0, 300);
+    if (subject) page.project = subject.slice(0, 300);
+  }
+  for (const kind of ['header', 'footer'] as const) {
+    const f = zip.file(`mathcad/${kind}.xml`);
+    if (!f) continue;
+    const doc = parseXml(strip(await f.async('string')));
+    const rels = new Map<string, string>();
+    const rf = zip.file(`mathcad/_rels/${kind}.xml.rels`);
+    if (rf) for (const r of Array.from(parseXml(strip(await rf.async('string'))).getElementsByTagName('*')) as Element[]) if (r.localName === 'Relationship') rels.set(r.getAttribute('Id') ?? '', (r.getAttribute('Target') ?? '').replace(/^\//, ''));
+    const slots: string[][] = [[], [], []];
+    const regs = Array.from(doc.getElementsByTagName('*')).filter(e => e.localName === 'region');
+    for (const reg of regs) {
+      const left = coord(reg.getAttribute('left')), w = coord(reg.getAttribute('actualWidth') ?? reg.getAttribute('width'), 1e4);
+      const mid = left + w / 2;
+      const slot = mid < 794 / 3 ? 0 : mid < 2 * 794 / 3 ? 1 : 2;
+      const content = kids(reg)[0];
+      if (!content) continue;
+      let text = '';
+      if (local(content) === 'fieldText') {
+        const pn = child(content, 'pageNumber');
+        const tpl = pn?.getAttribute('template');
+        if (tpl) text = tpl.replace(/@PagesTotal/g, '{seiten}').replace(/@PageNo/g, '{seite}').replace(/_/g, ' ');
+        else text = kids(content).map(c => c.textContent ?? '').join('').trim();
+      } else if (local(content) === 'text') {
+        const target = rels.get(content.getAttribute('item-idref') ?? '');
+        const pf = target ? zip.file(target) : null;
+        if (pf) {
+          const inner = await JSZip.loadAsync(await pf.async('uint8array'));
+          const xf = Object.values(inner.files).find(x => /\.xaml$/i.test(x.name));
+          if (xf) text = (parseXml(strip(await xf.async('string'))).documentElement.textContent ?? '').replace(/\s+/g, ' ').trim();
+        }
+      }
+      if (text) slots[slot].push(text.slice(0, 300));
+    }
+    if (slots.some(s => s.length)) page[kind] = slots.map(s => s.join(' ')) as [string, string, string];
+  }
+  return Object.keys(page).length ? page : null;
 }
 
 function convertPlot(plot: Element, x: number, y: number, w: number, h: number, ctx: ConvertCtx): Region {

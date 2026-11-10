@@ -13,6 +13,8 @@ import { sortRegions, safeImageSrc, type MathRegion, type Region, type Worksheet
 import { isBuiltinFunction } from '../engine/builtins';
 import { lookupUnit } from '../engine/units';
 import { APP_XML, CALCULATION_XML, PRESENTATION_XML } from './mcdxTemplate';
+import type { ComputeResult } from '../engine/worksheet';
+import { headerFooter, pageVars, templateParts } from '../engine/pageinfo';
 
 const NS_WS = 'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:ve="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:ws="http://schemas.mathsoft.com/worksheet50" xmlns:ml="http://schemas.mathsoft.com/math50" xmlns:u="http://schemas.mathsoft.com/units10" xmlns:p="http://schemas.mathsoft.com/provenance10" xmlns="http://schemas.mathsoft.com/worksheet50"';
 const XAML_NS = 'http://schemas.microsoft.com/winfx/2006/xaml/presentation';
@@ -147,10 +149,9 @@ function stmt(s: Stmt, ctx: Ctx): string {
     case 'while': return `<ml:while><ml:test>${X(s.cond, ctx)}</ml:test>${program(s.body, ctx)}</ml:while>`;
     case 'try': return `<ml:tryCatch>${program(s.body, ctx)}${program(s.onError, ctx)}</ml:tryCatch>`;
     case 'if': {
-      if (s.branches.some(b => b.also)) ctx.warnings.push('„also if“ als „else if“ geschrieben');
       const [first, ...rest] = s.branches;
       return `<ml:if><ml:test>${X(first.cond, ctx)}</ml:test><ml:then>${program(first.body, ctx)}</ml:then>`
-        + rest.map(b => `<ml:elseif><ml:test>${X(b.cond, ctx)}</ml:test><ml:then>${program(b.body, ctx)}</ml:then></ml:elseif>`).join('')
+        + rest.map(b => { const tag = b.also ? 'alsoif' : 'elseif'; return `<ml:${tag}><ml:test>${X(b.cond, ctx)}</ml:test><ml:then>${program(b.body, ctx)}</ml:then></ml:${tag}>`; }).join('')
         + (s.otherwise ? `<ml:else>${program(s.otherwise, ctx)}</ml:else>` : '') + '</ml:if>';
     }
   }
@@ -170,7 +171,17 @@ function target(t: DefTarget, ctx: Ctx): string {
 const evalXml = (expr: string, unit: Node | undefined, ctx: Ctx) =>
   `<ml:eval>${expr}<ml:unitOverride>${unit ? X(unit, ctx) : '<ml:placeholder />'}</ml:unitOverride></ml:eval>`;
 
-function mathXml(st: MathStmt, ctx: Ctx): string {
+/** Prime's symbolic evaluation: expression, keyword with arguments (<command>), result (<symResult>). */
+function symEvalXml(expr: Node, kw: { name: string; args: Node[] } | undefined, result: string | undefined, ctx: Ctx): string {
+  const command = kw
+    ? (kw.args.length ? `<ml:sequence><ml:id xml:space="preserve">${esc(kw.name)}</ml:id>${kw.args.map(a => X(a, ctx)).join('')}</ml:sequence>` : `<ml:id xml:space="preserve">${esc(kw.name)}</ml:id>`)
+    : '<ml:placeholder />';
+  let res = '<ml:placeholder />';
+  if (result) { try { res = X(parseExpression(result, true), ctx); } catch { /* Prime calculates it anew */ } }
+  return `<ml:symEval>${X(expr, ctx)}<ml:command>${command}</ml:command><ml:symResult>${res}</ml:symResult></ml:symEval>`;
+}
+
+function mathXml(st: MathStmt, ctx: Ctx, symResult?: string): string {
   switch (st.kind) {
     case 'define': {
       const body = scoped(ctx, st.target.params ?? [], () => X(st.expr, ctx));
@@ -178,9 +189,10 @@ function mathXml(st: MathStmt, ctx: Ctx): string {
       return `<ml:${st.global ? 'globalDefine' : 'define'}>${target(st.target, ctx)}${rhs}</ml:${st.global ? 'globalDefine' : 'define'}>`;
     }
     case 'eval':
-      if (st.sym) { ctx.warnings.push('Symbolische Auswertung „→“ als numerische Auswertung geschrieben'); }
+      if (st.sym) return symEvalXml(st.expr, st.sym.kw, symResult, ctx);
       return evalXml(X(st.expr, ctx), st.unit, ctx);
-    case 'expr': return X(st.expr, ctx);
+    // an imported Mathcad symbolic evaluation whose keyword FormelWerk does not know
+    case 'expr': return symResult ? symEvalXml(st.expr, undefined, symResult, ctx) : X(st.expr, ctx);
     case 'empty': throw new ExportError('leer');
   }
 }
@@ -253,8 +265,9 @@ function plotXml(r: Region & { type: 'plot' }, ctx: Ctx, nextRef: () => number):
     if (!t || !t.trim()) return null;
     try { return X(parseExpression(t, true), ctx); } catch { return null; }
   };
-  const traces = r.traces.map(t => ({ t, x: expr(t.x), y: expr(t.y) })).filter(q => q.x && q.y);
-  if (!traces.length) return null;
+  let traces = r.traces.map(t => ({ t, x: expr(t.x), y: expr(t.y) })).filter(q => q.x && q.y);
+  // an empty plot stays an empty plot (placeholders, as Prime inserts it)
+  if (!traces.length) traces = [{ t: { x: '', y: '' }, x: '<ml:placeholder />', y: '<ml:placeholder />' }];
   const xu = expr(r.xUnit) ?? '<ml:placeholder />', yu = expr(r.yUnit) ?? '<ml:placeholder />';
   const color = (c: string | undefined, i: number) => {
     const hex = /^#([0-9a-f]{6})$/i.exec(c ?? '')?.[1] ?? ['1F4FD8', 'D64545', '2E9E5B', 'D98C1F', '7A4FC9', '1A9AA8'][i % 6];
@@ -293,7 +306,9 @@ const findCall = (st: MathStmt | null): string[] | null => {
   return names;
 };
 
-export async function buildMcdx(ws: Worksheet): Promise<McdxResult> {
+export interface McdxOptions { /** Calculated results (symbolic results are stored with the formulas). */ result?: ComputeResult | null; fileName?: string | null }
+
+export async function buildMcdx(ws: Worksheet, opts: McdxOptions = {}): Promise<McdxResult> {
   const warnings: string[] = [];
   const ctx: Ctx = { defined: new Set(), warnings, local: [] };
   const order = sortRegions(ws.regions);
@@ -322,7 +337,9 @@ export async function buildMcdx(ws: Worksheet): Promise<McdxResult> {
       return null;
     }
     let xml: string;
-    try { xml = mathXml(st, ctx); } catch (e) { warnings.push(`Formel nicht übertragbar: ${r.src.split('\n')[0]} (${(e as Error).message})`); return null; }
+    const res = opts.result?.results[r.id];
+    const sym = (st.kind === 'eval' && st.sym && res && !res.error && res.src === r.src ? res.resultText : undefined) ?? r.imported?.symbolic;
+    try { xml = mathXml(st, ctx, st.kind === 'eval' && st.sym || st.kind === 'expr' ? sym : undefined); } catch (e) { warnings.push(`Formel nicht übertragbar: ${r.src.split('\n')[0]} (${(e as Error).message})`); return null; }
     const ref = resultId++;
     results.push(`<resultData result-id="${ref}" calculation-status="Pending"><ml:result /></resultData>`);
     const disabled = r.disabled ? ' disabled="true"' : '';
@@ -416,14 +433,44 @@ export async function buildMcdx(ws: Worksheet): Promise<McdxResult> {
   }
 
   const worksheetXml = `<?xml version="1.0" encoding="utf-8"?><worksheet msg-id="NoMessage" ${NS_WS}><regions>${out.join('')}</regions></worksheet>`;
+
+  // header and footer: left / centre / right; page numbers become Prime's page number field
+  const vars = pageVars(ws, opts.fileName);
+  const hf = headerFooter(ws);
+  const hfParts: { kind: 'header' | 'footer'; xml: string; rels: string[] }[] = [];
+  for (const kind of ['header', 'footer'] as const) {
+    const texts = hf[kind];
+    if (texts.every(t => !t.trim())) continue;
+    const hrels: string[] = [];
+    const regs: string[] = [];
+    for (let k = 0; k < 3; k++) {
+      const tpl = texts[k];
+      if (!tpl.trim()) continue;
+      const tp = templateParts(tpl, vars);
+      const plain = tp.map(p => ('text' in p ? p.text : p.field === 'PAGE' ? '1' : '1')).join('');
+      const w = Math.max(60, Math.round(plain.length * 7.6));
+      const left = k === 0 ? 48 : k === 1 ? (794 - w) / 2 : 794 - 48 - w;
+      const geo = `region-id="${regionId++}" actualWidth="${w}" actualHeight="17.7" top="19.2" left="${left.toFixed(3)}"`;
+      if (tp.some(p => 'field' in p)) {
+        const template = tp.map(p => ('text' in p ? p.text : p.field === 'PAGE' ? '@PageNo' : '@PagesTotal')).join('').replace(/ /g, '_');
+        regs.push(`<region ${geo}><fieldText><text><FlowDocument FontFamily="Tahoma" FontSize="14.666666666666668" Foreground="#FF000000" xmlns="${XAML_NS}"><Paragraph>${esc(plain)}</Paragraph></FlowDocument></text><pageNumber template="${esc(template)}" /></fieldText></region>`);
+      } else {
+        const id = rid(), name = `FlowDocument${++textN}.XamlPackage`;
+        parts.push({ path: `mathcad/xaml/${name}`, data: await xamlPackage(htmlToXaml(esc(plain))) });
+        hrels.push(`<Relationship Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/flowDocument" Target="/mathcad/xaml/${name}" Id="${id}" />`);
+        regs.push(`<region ${geo} width="${w}"><text item-idref="${id}"><FlowDocument FontFamily="Tahoma" FontSize="14.666666666666668" xmlns="${XAML_NS}" /></text></region>`);
+      }
+    }
+    hfParts.push({ kind, xml: `<${kind} ${NS_WS}><regions>${regs.join('')}</regions></${kind}>`, rels: hrels });
+  }
   const resultXml = `<?xml version="1.0" encoding="utf-8"?><resultsList xmlns:ml="http://schemas.mathsoft.com/math50" xmlns:u="http://schemas.mathsoft.com/units10" xmlns="http://schemas.mathsoft.com/result10">${results.join('')}</resultsList>`;
   const calc = CALCULATION_XML.replace(/array-origin="-?\d+"/, `array-origin="${ws.settings.origin ?? 0}"`);
   const t = (s: string) => esc(s);
-  const core = `<?xml version="1.0" encoding="utf-8"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>${t(ws.title ?? '')}</dc:title><dc:creator>${t(ws.settings.page?.author ?? '')}</dc:creator><cp:lastModifiedBy>FormelWerk</cp:lastModifiedBy><cp:revision>1</cp:revision></cp:coreProperties>`;
+  const core = `<?xml version="1.0" encoding="utf-8"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>${t(ws.title ?? '')}</dc:title><dc:creator>${t(ws.settings.page?.author ?? '')}</dc:creator>${ws.settings.page?.project ? `<dc:subject>${t(ws.settings.page.project)}</dc:subject>` : ''}<cp:lastModifiedBy>FormelWerk</cp:lastModifiedBy><cp:revision>1</cp:revision></cp:coreProperties>`;
 
   const z = new JSZip();
   z.file('[Content_Types].xml', '<?xml version="1.0" encoding="utf-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/vnd.openxmlformats-officedocument.mathprocessingml.mathcad.main+xml" /><Default Extension="XamlPackage" ContentType="application/zip" /><Default Extension="png" ContentType="image/png" /><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml" /><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml" /><Override PartName="/docProps/app.xml" ContentType="application/mathcad.extended-properties+xml" /><Override PartName="/mathcad/settings/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.mathprocessingml.mathcad.settings.presentation+xml" /><Override PartName="/mathcad/settings/calculation.xml" ContentType="application/vnd.openxmlformats-officedocument.mathprocessingml.mathcad.settings.calculation+xml" /><Override PartName="/mathcad/result.xml" ContentType="application/vnd.openxmlformats-officedocument.mathprocessingml.mathcad.result+xml" /><Override PartName="/mathcad/integration.xml" ContentType="application/vnd.openxmlformats-officedocument.mathprocessingml.mathcad.integration+xml" /></Types>');
-  z.file('_rels/.rels', '<?xml version="1.0" encoding="utf-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="/mathcad/worksheet.xml" Id="R0000000001" /><Relationship Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="/docProps/core.xml" Id="R0000000002" /></Relationships>');
+  z.file('_rels/.rels', '<?xml version="1.0" encoding="utf-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="/mathcad/worksheet.xml" Id="R0000000001" /><Relationship Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="/docProps/core.xml" Id="R0000000002" />' + hfParts.map((h, k) => `<Relationship Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="/mathcad/${h.kind}.xml" Id="R000000001${k}" />`).join('') + '</Relationships>');
   z.file('docProps/core.xml', core);
   z.file('docProps/app.xml', APP_XML);
   z.file('mathcad/worksheet.xml', worksheetXml);
@@ -432,6 +479,10 @@ export async function buildMcdx(ws: Worksheet): Promise<McdxResult> {
   z.file('mathcad/integration.xml', '<?xml version="1.0" encoding="utf-8"?><regions xmlns="http://schemas.ptc.com/integration10" />');
   z.file('mathcad/settings/presentation.xml', PRESENTATION_XML);
   z.file('mathcad/settings/calculation.xml', calc);
+  for (const h of hfParts) {
+    z.file(`mathcad/${h.kind}.xml`, h.xml);
+    if (h.rels.length) z.file(`mathcad/_rels/${h.kind}.xml.rels`, `<?xml version="1.0" encoding="utf-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${h.rels.join('')}</Relationships>`);
+  }
   for (const p of parts) z.file(p.path, p.data);
   const blob = await z.generateAsync({ type: 'blob', mimeType: 'application/vnd.mathcad.mcdx' });
   return { blob, warnings: [...new Set(warnings)] };

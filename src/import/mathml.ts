@@ -20,6 +20,9 @@ export const child = (e: Element, name: string) => kids(e).find(c => c.localName
 
 class ConvertError extends Error {}
 
+/** Symbolic keywords FormelWerk evaluates itself (others keep Mathcad's stored result only). */
+const SYM_KEYWORDS = new Set(['simplify', 'expand', 'float', 'solve', 'substitute', 'factor', 'coeffs', 'series', 'parfrac']);
+
 /* ---------------------------------- names ---------------------------------- */
 
 /** Prime units whose name is also a physical constant in the 'name syntax. */
@@ -493,7 +496,17 @@ export function convertMathElement(math: Element, ctx: ConvertCtx): ConvertedMat
       const srExpr = sr ? kids(sr)[0] : undefined;
       let symbolic: Node | undefined;
       try { symbolic = srExpr ? convertExpr(srExpr, ctx) : undefined; } catch { symbolic = undefined; }
-      return { stmt: { kind: 'expr', expr: convertExpr(exprEl, ctx) }, symbolic };
+      const expr = convertExpr(exprEl, ctx);
+      // "→ keyword, arguments" (Prime's <command>); keywords FormelWerk knows become its own symbolic evaluation
+      const cmd = child(top, 'command');
+      const c = cmd ? kids(cmd)[0] : undefined;
+      if (!c || local(c) === 'placeholder') return { stmt: { kind: 'eval', expr, sym: {} }, symbolic };
+      const parts = local(c) === 'sequence' ? kids(c) : [c];
+      const name = parts[0] && local(parts[0]) === 'id' ? idName(parts[0]) : '';
+      if (SYM_KEYWORDS.has(name)) {
+        try { return { stmt: { kind: 'eval', expr, sym: { kw: { name, args: parts.slice(1).map(x => convertExpr(x, ctx)) } } }, symbolic }; } catch { /* fall through */ }
+      }
+      return { stmt: { kind: 'expr', expr }, symbolic };
     }
     default:
       return { stmt: { kind: 'expr', expr: convertExpr(top, ctx) } };

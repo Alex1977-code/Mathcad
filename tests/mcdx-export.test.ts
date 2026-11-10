@@ -62,4 +62,39 @@ describe('Export nach Mathcad Prime (.mcdx)', () => {
     expect(xml).toContain('<ml:for>');
     expect(shown(back)).toEqual(['10', '10', '2', '24']);
   });
+
+  it('symbolische Auswertung „→“ mit Schlüsselwort und Ergebnis als Prime-Symbolik', async () => {
+    const ws = sheet(['x^2 + 2*x*x →', '(x + 1)^2 → expand', 'a*x + b == 0 → solve, x', 'x^2 + 1 → substitute, x = c + 1']);
+    const result = computeWorksheet(ws);
+    const { blob, warnings } = await buildMcdx(ws, { result });
+    expect(warnings).toEqual([]);
+    const buf = Buffer.from(await blob.arrayBuffer());
+    const xml = await (await JSZip.loadAsync(buf)).file('mathcad/worksheet.xml')!.async('string');
+    expect((xml.match(/<ml:symEval>/g) ?? []).length).toBe(4);
+    expect(xml).toContain('<ml:command><ml:sequence><ml:id xml:space="preserve">solve</ml:id>');
+    expect(xml).toContain('<ml:command><ml:id xml:space="preserve">expand</ml:id></ml:command>');
+    expect(xml).toMatch(/<ml:symResult><ml:apply><ml:mult \/><ml:real>3<\/ml:real>/);
+    // read back: FormelWerk formulas with keyword again, same symbolic results
+    const back = await loadWorksheetFile('s.mcdx', buf);
+    expect(sortRegions(back.regions).map(r => (r as { src: string }).src.replace(/[\s*]/g, ''))).toEqual(['x^2+2xx→', '(x+1)^2→expand', 'ax+b==0→solve,x', 'x^2+1→substitute,x=c+1']);
+    const rb = computeWorksheet(back);
+    expect(sortRegions(back.regions).map(r => rb.results[r.id].symbolicLatex)).toEqual(sortRegions(ws.regions).map(r => result.results[r.id].symbolicLatex));
+  });
+
+  it('leeres Diagramm, Kopf- und Fußzeile, Projekt und Bearbeiter', async () => {
+    const ws = sheet(['a := 1']);
+    ws.regions.push({ id: 'p', type: 'plot', x: 48, y: 120, w: 400, h: 260, traces: [{ x: 'x', y: '' }] });
+    ws.settings.page = { project: 'Halle 3', author: 'A. Muster', header: ['Projekt Halle 3', '', 'Statik'], footer: ['', '', 'Seite {seite} von {seiten}'] };
+    const { back, warnings, zip } = await roundTrip(ws);
+    expect(warnings).toEqual([]);
+    expect(await zip.file('mathcad/footer.xml')!.async('string')).toContain('<pageNumber template="Seite_@PageNo_von_@PagesTotal" />');
+    expect(back.regions.filter(r => r.type === 'plot').length).toBe(1);
+    expect(back.settings.page).toEqual(ws.settings.page);
+  });
+
+  it('liest Kopf- und Fußzeile echter Prime-Dateien', async () => {
+    const ws = await loadWorksheetFile('header_footer.mcdx', readFileSync(join(__dirname, 'fixtures/mathcad/prime/header_footer.mcdx')));
+    expect(ws.settings.page?.header?.[0]).toMatch(/Author: John Smith/);
+    expect(ws.settings.page?.footer?.[2]).toBe('Page {seite} of {seiten}');
+  });
 });

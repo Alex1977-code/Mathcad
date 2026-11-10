@@ -285,7 +285,12 @@ export class WorksheetEngine {
         case 'expr': break;
         case 'eval': {
           if (p.sym) {
-            const node = symbolicEval(p.expr, p.sym.kw, scope);
+            let node: Node;
+            try { node = symbolicEval(p.expr, p.sym.kw, scope); } catch (e) {
+              // imported from Mathcad: what FormelWerk cannot do symbolically, Mathcad's stored result shows
+              if (r.imported?.symbolic) break;
+              throw e;
+            }
             res.symbolicLatex = toLatex(node, this.latexCtx(scope));
             res.resultText = toText(node);
             break;

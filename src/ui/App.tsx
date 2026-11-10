@@ -113,7 +113,7 @@ export function App() {
   };
   const makeMcdx = async () => {
     const { buildMcdx } = await import('../export/mcdx');
-    const r = await buildMcdx(store.get().ws);
+    const r = await buildMcdx(store.get().ws, { result: latestResult.current, fileName: store.get().fileName });
     if (r.warnings.length) notify(`Mathcad-Export: ${r.warnings.length} Hinweis${r.warnings.length > 1 ? 'e' : ''} – ${r.warnings[0]}`, true);
     return r.blob;
   };
