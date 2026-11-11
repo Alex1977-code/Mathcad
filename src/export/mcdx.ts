@@ -9,7 +9,7 @@
 import JSZip from 'jszip';
 import { walk, type DefTarget, type MathStmt, type Node, type Stmt } from '../engine/ast';
 import { parseExpression, parseMathRegion } from '../engine/parser';
-import { sortRegions, safeImageSrc, type MathRegion, type Region, type Worksheet } from '../engine/model';
+import { sortRegions, safeImageSrc, sliderSrc, type MathRegion, type Region, type Worksheet } from '../engine/model';
 import { isBuiltinFunction } from '../engine/builtins';
 import { lookupUnit } from '../engine/units';
 import { APP_XML, CALCULATION_XML, PRESENTATION_XML } from './mcdxTemplate';
@@ -312,7 +312,8 @@ export interface McdxOptions { /** Calculated results (symbolic results are stor
 export async function buildMcdx(ws: Worksheet, opts: McdxOptions = {}): Promise<McdxResult> {
   const warnings: string[] = [];
   const ctx: Ctx = { defined: new Set(), warnings, local: [] };
-  const order = sortRegions(ws.regions);
+  // a slider is written as the definition it stands for (Prime's slider control format is not documented)
+  const order = sortRegions(ws.regions).map(r => (r.type === 'slider' ? { id: r.id, type: 'math', x: r.x, y: r.y, src: sliderSrc(r) } as MathRegion : r));
   const parsed = new Map<string, MathStmt | null>();
   for (const r of order) {
     if (r.type !== 'math' || isGiven(r)) continue;

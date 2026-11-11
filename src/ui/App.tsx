@@ -175,7 +175,8 @@ export function App() {
       const mod = e.ctrlKey || e.metaKey;
       const s = store.get();
       const k = e.key.toLowerCase();
-      const inField = (e.target as HTMLElement)?.closest?.('input, textarea, [contenteditable="true"], select');
+      // a slider (range input) is no text field: undo and the other shortcuts keep working while it has the focus
+      const inField = (e.target as HTMLElement)?.closest?.('input:not([type="range"]), textarea, [contenteditable="true"], select');
       if (mod && k === 's') { e.preventDefault(); save(e.shiftKey); return; }
       if (mod && k === 'o') { e.preventDefault(); openFile(); return; }
       if (mod && k === 'p') { e.preventDefault(); window.print(); return; }

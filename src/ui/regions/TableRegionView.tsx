@@ -83,7 +83,7 @@ export function TableRegionView({ region, result }: Props) {
 
   const err = result?.error;
   return (
-    <div className="table-region" ref={box} onKeyDown={(e) => e.stopPropagation()}>
+    <div className="tr-box" ref={box} onKeyDown={(e) => e.stopPropagation()}>
       <div className="tr-head">
         <input className="tr-name" aria-label="Name der Tabelle" value={region.name} spellCheck={false}
           onMouseDown={(e) => e.stopPropagation()} onFocus={() => { dirty.current = false; }}

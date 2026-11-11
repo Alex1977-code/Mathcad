@@ -106,4 +106,12 @@ describe('Export nach Mathcad Prime (.mcdx)', () => {
     expect(shown(back)).toEqual(shown(ws));
     expect(shown(back)).toEqual(['2000 N']);
   });
+
+  it('Schieberegler wird als Definition geschrieben', async () => {
+    const ws = sheet(['F*2 = kN']);
+    ws.regions.unshift({ id: 'sl', type: 'slider', x: 48, y: 0, name: 'F', min: 0, max: 20, step: 0.5, value: 12, unit: 'kN' });
+    const { back, warnings } = await roundTrip(ws);
+    expect(warnings).toEqual([]);
+    expect(shown(back)).toEqual(['24']);
+  });
 });

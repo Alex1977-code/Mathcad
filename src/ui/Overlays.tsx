@@ -4,7 +4,7 @@ import {
   alignSelection, canPaste, commands, copyImageWithToast, copySelection, deleteSelection, duplicateSelection, editSelection, insertRegion, paste,
   selectAll, separateAll, toggleDisabled,
 } from './actions';
-import { compatibleUnits, copyResult, currentUnit, equationUnknown, plotFunction, plottableFunction, resultOf, setDisplayUnit, solveEquation, toggleShowValue, toggleValue, withDisplayUnit } from './smart';
+import { makeSlider, sliderFromDefinition, compatibleUnits, copyResult, currentUnit, equationUnknown, plotFunction, plottableFunction, resultOf, setDisplayUnit, solveEquation, toggleShowValue, toggleValue, withDisplayUnit } from './smart';
 
 interface Item { label: string; keys?: string; run: () => void; disabled?: boolean; danger?: boolean }
 type Entry = Item | 'sep';
@@ -49,6 +49,7 @@ export function ContextMenu() {
         smart.push({ label: 'Einheit des Ergebnisses …', run: () => store.set({ unitPicker: { regionId: region.id, x: cm.x, y: cm.y } }) });
       }
       if ((res?.resultText || res?.valueText) && !res.error) smart.push({ label: 'Ergebnis kopieren', run: () => copyResult(region.id) });
+      if (sliderFromDefinition(region.src)) smart.push({ label: 'In Schieberegler umwandeln', run: () => makeSlider(region.id) });
       const u = equationUnknown(region);
       if (u) smart.push({ label: `Gleichung nach ${u} lösen`, run: () => solveEquation(region.id) });
     }

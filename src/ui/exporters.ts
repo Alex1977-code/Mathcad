@@ -157,7 +157,8 @@ export async function makeDocx(ws: Worksheet, result: ComputeResult | null): Pro
     fileName: store.get().fileName,
     mathLatex: (r: MathRegion) => {
       const res = result?.results[r.id];
-      const stale = !!res && res.src !== undefined && res.src !== r.src;
+      // sliders arrive as definitions: no own formula result
+      const stale = !res?.latex || (res.src !== undefined && res.src !== r.src);
       return composeLatex(r.src, stale ? { id: r.id } : res).latex;
     },
     plotPng: async (r: PlotRegion) => {

@@ -171,6 +171,36 @@ export function quickPlotAtCursor() {
   store.set({ plotEditor: p.id, cursor: { x: cur.x, y: snap(cur.y + 290) } });
 }
 
+/** "a := 5 m" (a number, optionally with a unit) → the parts of a slider; null for anything else. */
+export function sliderFromDefinition(src: string): { name: string; value: number; unit?: string } | null {
+  let st;
+  try { st = parseMathRegion(src); } catch { return null; }
+  if (st.kind !== 'define' || st.global || st.show || st.target.params || st.target.index || st.target.multi) return null;
+  // a number literal, optionally followed by a unit expression (kN, m/s, N*m …)
+  const m = /^[^:]*:=\s*(-?\s*(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s*\*?\s*(.*)$/.exec(src.trim());
+  if (!m) return null;
+  const value = parseFloat(m[1].replace(/\s+/g, ''));
+  const unit = m[2].trim();
+  if (!Number.isFinite(value)) return null;
+  if (!unit) return { name: st.target.name, value };
+  return unitDimensions(unit) ? { name: st.target.name, value, unit } : null;
+}
+
+/** Replace a numeric definition by a slider (range 0 … 2·value, 100 steps). */
+export function makeSlider(id: string) {
+  const r = store.get().ws.regions.find(x => x.id === id);
+  if (!r || r.type !== 'math') return;
+  const d = sliderFromDefinition(r.src);
+  if (!d) return;
+  const span = Math.abs(d.value) || 5;
+  const mag = 10 ** Math.floor(Math.log10(span * 2));
+  const hi = Math.ceil(span * 2 / mag) * mag;
+  const min = d.value < 0 ? -hi : 0, max = d.value < 0 ? 0 : hi;
+  const slider: Region = { id: newId(), type: 'slider', x: r.x, y: r.y, name: d.name, min, max, step: (max - min) / 100, value: d.value, ...(d.unit ? { unit: d.unit } : {}) };
+  store.updateWs(ws => ({ ...ws, regions: ws.regions.map(x => (x.id === id ? slider : x)) }));
+  store.set({ selection: [slider.id], editing: null, contextMenu: null });
+}
+
 /** Unknown of an equation region: the name the calculation stumbled over, else the first unknown name. */
 export function equationUnknown(r: MathRegion): string | null {
   const sides = equationSides(r.src);

@@ -2,7 +2,7 @@
  * Central command registry: used by the ribbon, the context menu, the command palette and the
  * keyboard shortcuts, so every function is reachable in the same way everywhere.
  */
-import { newId, sortRegions, type DataFile, type MathRegion, type Region } from '../engine/model';
+import { newId, sortRegions, type DataFile, type MathRegion, type Region, type SliderRegion } from '../engine/model';
 import { store, writePref } from './store';
 import { getActiveEditor } from './editing';
 import { MARGIN, regionElements, separateRegions, snap } from './layout';
@@ -55,6 +55,17 @@ export function insertTable(at?: { x: number; y: number }, init?: Partial<Region
   const r: Region = { id: newId(), type: 'table', x: cur.x, y: cur.y, name, columns: [{ name: 'x' }, { name: 'y' }], rows: Array.from({ length: 4 }, () => ['', '']), ...init } as Region;
   store.addRegion(r);
   store.set({ cursor: { x: cur.x, y: snap(cur.y + 60 + 26 * ((r as { rows: unknown[] }).rows.length + 1)) } });
+}
+
+/** Slider at the cursor: a variable that is changed by dragging. */
+export function insertSlider(at?: { x: number; y: number }, init?: Partial<SliderRegion>) {
+  const s = store.get();
+  const cur = at ?? s.cursor ?? { x: MARGIN, y: MARGIN };
+  const used = new Set(s.ws.regions.filter(r => r.type === 'slider').map(r => (r as SliderRegion).name));
+  const name = ['a', 'b', 'c', 'd', 'k', 'p', 'q'].find(n => !used.has(n)) ?? `a${used.size + 1}`;
+  const r: SliderRegion = { id: newId(), type: 'slider', x: cur.x, y: cur.y, name, min: 0, max: 10, step: 0.1, value: 5, ...init };
+  store.addRegion(r);
+  store.set({ cursor: { x: cur.x, y: snap(cur.y + 48) } });
 }
 
 const DATA_EXT = /\.(csv|txt|prn|dat|tsv|xlsx|xls)$/i;
@@ -356,6 +367,7 @@ export function commands(): Command[] {
     { id: 'text', group: 'Einfügen', label: 'Textbereich', keys: '"', run: () => insertRegion('text'), tags: 'notiz beschreibung' },
     { id: 'plot', group: 'Einfügen', label: 'X-Y-Diagramm', keys: '@', run: () => quickPlotAtCursor(), tags: 'diagramm plot graph kurve' },
     { id: 'table', group: 'Einfügen', label: 'Datentabelle', run: () => insertTable(), tags: 'tabelle daten messwerte excel' },
+    { id: 'slider', group: 'Einfügen', label: 'Schieberegler', run: () => insertSlider(), tags: 'regler slider steuerelement variable ziehen' },
     { id: 'datafile', group: 'Einfügen', label: 'Datei einlesen (CSV, Excel) …', run: () => { void insertDataFile(); }, tags: 'csv excel xlsx xls prn import daten readexcel readcsv' },
     { id: 'datatable', group: 'Einfügen', label: 'Datei als Datentabelle einfügen …', run: () => { void insertDataFile(null, true); }, tags: 'csv excel xlsx tabelle import' },
     { id: 'image', group: 'Einfügen', label: 'Bild …', run: () => insertImage() },

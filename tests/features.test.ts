@@ -5,6 +5,8 @@ import { emptyWorksheet, normalizeWorksheet, type Worksheet } from '../src/engin
 import { fillTemplate, pageVars, templateParts } from '../src/engine/pageinfo';
 import { findMatches, replaceAll, replaceInRegion } from '../src/ui/findReplace';
 import { buildDocx } from '../src/export/docx';
+import { computeWorksheet } from '../src/engine/worksheet';
+import { sliderFromDefinition } from '../src/ui/smart';
 
 function sheet(): Worksheet {
   const ws = emptyWorksheet();
@@ -61,5 +63,40 @@ describe('Kopf- und Fußzeile', () => {
     expect(hdr).toContain('Halle 3');
     expect(ftr).toMatch(/PAGE.*NUMPAGES/s);
     expect(await zip.file('word/document.xml')!.async('string')).toContain('headerReference');
+  });
+});
+
+describe('Schieberegler', () => {
+  it('definiert die Variable mit Einheit; Änderungen rechnen nach', () => {
+    const ws = emptyWorksheet();
+    ws.regions = [
+      { id: 's', type: 'slider', x: 48, y: 0, name: 'F', min: 0, max: 20, step: 0.5, value: 12, unit: 'kN' },
+      { id: 'm', type: 'math', x: 48, y: 40, src: 'F*2 m = kN*m' },
+    ];
+    expect(computeWorksheet(ws).results.m.resultText).toBe('24');
+    const ws2 = { ...ws, regions: [{ ...ws.regions[0], value: 7.5 } as typeof ws.regions[0], ws.regions[1]] };
+    expect(computeWorksheet(ws2).results.m.resultText).toBe('15');
+    const bad = { ...ws, regions: [{ ...ws.regions[0], unit: 'kN*(' } as typeof ws.regions[0], ws.regions[1]] };
+    expect(computeWorksheet(bad).results.s.error).toBeTruthy();
+  });
+  it('bleibt beim Speichern erhalten und wird begrenzt', () => {
+    const ws = emptyWorksheet();
+    ws.regions = [{ id: 's', type: 'slider', x: 0, y: 0, name: 'a', min: 10, max: 0, step: 0, value: 99 }];
+    const back = normalizeWorksheet(JSON.parse(JSON.stringify(ws)));
+    expect(back.regions[0]).toMatchObject({ type: 'slider', name: 'a', min: 0, max: 10, value: 10, step: 0.1 });
+  });
+  it('erkennt Zahl-Definitionen zum Umwandeln', () => {
+    expect(sliderFromDefinition('F := 12 kN')).toEqual({ name: 'F', value: 12, unit: 'kN' });
+    expect(sliderFromDefinition('n := 4')).toEqual({ name: 'n', value: 4 });
+    expect(sliderFromDefinition('t := -2.5 m/s')).toEqual({ name: 't', value: -2.5, unit: 'm/s' });
+    expect(sliderFromDefinition('a := b*2')).toBeNull();
+    expect(sliderFromDefinition('f(x) := 2')).toBeNull();
+    expect(sliderFromDefinition('x := 3 =')).toBeNull();
+  });
+  it('wird in Word als Definition geschrieben', async () => {
+    const ws = emptyWorksheet();
+    ws.regions = [{ id: 's', type: 'slider', x: 48, y: 0, name: 'F', min: 0, max: 20, step: 0.5, value: 12, unit: 'kN' }];
+    const zip = await JSZip.loadAsync(await (await buildDocx(ws, { mathLatex: r => r.src })).arrayBuffer());
+    expect(await zip.file('word/document.xml')!.async('string')).toMatch(/<m:oMath>.*>F<.*>12<.*>k<.*>N</s);
   });
 });

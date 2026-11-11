@@ -4,7 +4,7 @@ import { renderLatex } from './katex';
 import { RecentList } from './RecentList';
 import { store, useStore, readPref, writePref } from './store';
 import {
-  alignSelection, app, canPaste, changeDecimals, copySelection, deleteSelection, duplicateSelection, insertDataFile, insertImage, insertMatrix, insertTable,
+  alignSelection, app, canPaste, changeDecimals, copySelection, deleteSelection, duplicateSelection, insertDataFile, insertImage, insertMatrix, insertSlider, insertTable,
   insertRegion, insertSnippet, paste, recalcNow, separateAll, setZoom, showSide, toggleAutoCalc, toggleDefValues, toggleDisabled, toggleGrid,
   toggleSide, zoomBy, zoomPageWidth,
 } from './actions';
@@ -159,6 +159,7 @@ export function Ribbon() {
               <Stack>
                 <Small icon={<span className="ico-text">▦</span>} label="Tabelle" title="Datentabelle einfügen (Werte direkt eingeben oder aus Excel einfügen)" onClick={() => insertTable()} />
                 <Small icon={<span className="ico-text">⇪</span>} label="Daten" title="CSV- oder Excel-Datei einlesen (READCSV / READEXCEL) – oder Datei aufs Blatt ziehen" onClick={() => { void insertDataFile(); }} />
+                <Small icon={<span className="ico-text">⊶</span>} label="Regler" title="Schieberegler einfügen: Variable durch Ziehen ändern, alles rechnet mit" onClick={() => insertSlider()} />
               </Stack>
               <Stack>
                 <Small icon={<IconImage />} label="Bild" title="Bild einfügen" onClick={insertImage} />

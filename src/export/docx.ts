@@ -5,7 +5,7 @@
  * the title and "Seite n von N".
  */
 import JSZip from 'jszip';
-import { sortRegions, safeImageSrc, type Region, type Worksheet } from '../engine/model';
+import { sortRegions, safeImageSrc, sliderSrc, type Region, type Worksheet } from '../engine/model';
 import type { ComputeResult } from '../engine/worksheet';
 import { latexToOmml } from './omml';
 import { headerFooter, pageVars, templateParts } from '../engine/pageinfo';
@@ -151,7 +151,8 @@ export async function buildDocx(ws: Worksheet, opts: DocxOptions): Promise<Blob>
   };
 
   // reading order; regions whose tops are close form one line
-  const regions = sortRegions(ws.regions);
+  // a slider appears as the definition it stands for
+  const regions = sortRegions(ws.regions).map(r => (r.type === 'slider' ? { id: r.id, type: 'math', x: r.x, y: r.y, src: sliderSrc(r) } as Region : r));
   const rows: Region[][] = [];
   for (const r of regions) {
     const last = rows[rows.length - 1];

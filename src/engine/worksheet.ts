@@ -11,7 +11,7 @@ import {
 } from './values';
 import { escapeText, formatValue, formatReal, type FormatOptions, siUnitFactors, unitFactorsText } from './format';
 import { stmtLatex, toLatex, type LatexCtx } from './latex';
-import { sortRegions, type DataFile, type MathRegion, type PlotRegion, type Region, type TableRegion, type Worksheet } from './model';
+import { sortRegions, type DataFile, type MathRegion, type SliderRegion, type PlotRegion, type Region, type TableRegion, type Worksheet } from './model';
 import { checkResult, expectedToText, type CheckStatus } from './verify';
 import { symbolicEval } from './symbolic';
 import { WRITE_NAMES, beginWrites, cellValue, endWrites, getWritten, setDataFiles, setWritten } from './datafiles';
@@ -212,6 +212,7 @@ export class WorksheetEngine {
   step(r: Region, parsed: (r: MathRegion) => MathStmt | ParseError, globalResults: Record<string, RegionResult>): RegionResult | undefined {
     if (r.type === 'plot') return { id: r.id, plot: this.runPlot(r) };
     if (r.type === 'table') return this.runTable(r);
+    if (r.type === 'slider') return this.runSlider(r);
     if (r.type !== 'math') return undefined;
     // imported formula that could not be converted, but has a result stored by Mathcad: counts as not reproduced
     if (r.disabled && r.imported?.original && r.imported.expected) {
@@ -285,6 +286,24 @@ export class WorksheetEngine {
 
   compute(): ComputeResult {
     return new ComputeSession(this.opts).runToEnd(this.ws);
+  }
+
+  /* ------------------------------ sliders ------------------------------ */
+
+  /** Slider: name := value · unit. */
+  runSlider(r: SliderRegion): RegionResult {
+    const res: RegionResult = { id: r.id, kind: 'define', defines: r.name };
+    try {
+      if (!/^[\p{L}_][\p{L}\p{N}_.]*$/u.test(r.name)) throw new CalcError(`Ungültiger Name „${r.name}“`);
+      const v = r.unit?.trim() ? this.ev.multiply(r.value, this.ev.eval(parseExpression(r.unit), this.top), false) : r.value;
+      this.top.set(r.name, v);
+      this.definedBy.set(r.name, r.id);
+      const f = formatValue(v, this.fmt);
+      res.valueText = f.text;
+    } catch (e) {
+      res.error = { message: translateError(e).message, kind: 'calc' };
+    }
+    return res;
   }
 
   /* ------------------------------ tables ------------------------------- */

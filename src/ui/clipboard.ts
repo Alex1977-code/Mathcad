@@ -3,7 +3,7 @@
  * carries formulas in the form Word uses for equations (OMML in conditional comments) with a readable
  * fallback for other programs. Pasting from other programs creates formulas, text or picture regions.
  */
-import { newId, type MathRegion, type Region } from '../engine/model';
+import { newId, sliderSrc, type MathRegion, type Region } from '../engine/model';
 import { parseMathRegion } from '../engine/parser';
 import { latexToOmml } from '../export/omml';
 import { composeLatex } from './regions/MathRegionView';
@@ -35,13 +35,14 @@ function tableText(r: Region & { type: 'table' }): string {
 }
 
 export function regionsPlainText(regs: Region[]): string {
-  return regs.map(r => (r.type === 'math' ? mathText(r) : r.type === 'text' ? htmlToText(r.html) : r.type === 'table' ? tableText(r) : '')).filter(Boolean).join('\n');
+  return regs.map(r => (r.type === 'math' ? mathText(r) : r.type === 'text' ? htmlToText(r.html) : r.type === 'table' ? tableText(r) : r.type === 'slider' ? sliderSrc(r) : '')).filter(Boolean).join('\n');
 }
 
 /** HTML for the clipboard: Word equations (OMML) with a text fallback, text with formatting, pictures. */
 export function regionsHtml(regs: Region[]): string {
   const parts: string[] = [];
-  for (const r of regs) {
+  for (const r0 of regs) {
+    const r: Region = r0.type === 'slider' ? { id: r0.id, type: 'math', x: r0.x, y: r0.y, src: sliderSrc(r0) } : r0;
     if (r.type === 'math') {
       const res = resultOf(r.id);
       const latex = composeLatex(r.src, res && res.src === r.src ? res : { id: r.id }).latex;

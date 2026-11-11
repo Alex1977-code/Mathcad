@@ -69,7 +69,23 @@ export interface TableRegion extends RegionBase {
   rows: string[][];
 }
 
-export type Region = MathRegion | TextRegion | PlotRegion | ImageRegion | PageBreakRegion | TableRegion;
+/** Slider: defines `name := value unit`; dragging recalculates everything below it. */
+export interface SliderRegion extends RegionBase {
+  type: 'slider';
+  name: string;
+  min: number;
+  max: number;
+  step: number;
+  value: number;
+  unit?: string;
+}
+
+/** The definition a slider stands for, as formula text. */
+export function sliderSrc(r: SliderRegion): string {
+  return `${r.name} := ${r.value}${r.unit?.trim() ? ` ${r.unit.trim()}` : ''}`;
+}
+
+export type Region = MathRegion | TextRegion | PlotRegion | ImageRegion | PageBreakRegion | TableRegion | SliderRegion;
 
 /** Data file attached to the document (read by READCSV, READPRN, READEXCEL). */
 export interface DataFile {
@@ -240,6 +256,16 @@ export function normalizeWorksheet(raw: unknown): Worksheet {
         break;
       }
       case 'pagebreak': regions.push({ ...base, type: 'pagebreak' }); break;
+      case 'slider': {
+        const min = num(r.min, -1e300, 1e300, 0), max = num(r.max, -1e300, 1e300, 10);
+        const lo = Math.min(min, max), hi = Math.max(min, max) === lo ? lo + 1 : Math.max(min, max);
+        const step = num(r.step, 0, 1e300, 0) || (hi - lo) / 100;
+        const sl: SliderRegion = { ...base, type: 'slider', name: str(r.name, 100) ?? 'a', min: lo, max: hi, step, value: Math.min(hi, Math.max(lo, num(r.value, -1e300, 1e300, lo))) };
+        const u = str(r.unit, 100);
+        if (u?.trim()) sl.unit = u.trim();
+        regions.push(sl);
+        break;
+      }
       case 'table': {
         const cols = (Array.isArray(r.columns) ? r.columns : []).slice(0, 500).map(c0 => {
           const c = (c0 && typeof c0 === 'object' ? c0 : {}) as Record<string, unknown>;

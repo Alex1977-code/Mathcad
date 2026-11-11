@@ -7,6 +7,7 @@ import { MathRegionView } from './regions/MathRegionView';
 import { TextRegionView } from './regions/TextRegionView';
 import { PlotRegionView } from './regions/PlotRegionView';
 import { TableRegionView } from './regions/TableRegionView';
+import { SliderRegionView } from './regions/SliderRegionView';
 import { insertSnippet, newMathRegion } from './actions';
 import { quickPlotAtCursor } from './smart';
 import { RecentList } from './RecentList';
@@ -279,7 +280,7 @@ export function Sheet({ result, onOpenExample, onImport, pending }: Props) {
               const res = results[r.id];
               const sel = selSet.has(r.id);
               const ed = editing === r.id;
-              const err = (r.type === 'math' || r.type === 'table') && !!res?.error && !ed;
+              const err = (r.type === 'math' || r.type === 'table' || r.type === 'slider') && !!res?.error && !ed;
               const cls = ['region', `${r.type}-region`, sel ? 'selected' : '', ed ? 'editing' : '', err ? 'error' : '',
                 r.type === 'math' && r.disabled ? 'disabled-calc' : '', pending?.has(r.id) && !ed ? 'pending' : ''].filter(Boolean).join(' ');
               return (
@@ -317,6 +318,7 @@ export function Sheet({ result, onOpenExample, onImport, pending }: Props) {
                     </div>
                   )}
                   {r.type === 'table' && <TableRegionView region={r} result={res} />}
+                  {r.type === 'slider' && <SliderRegionView region={r} result={res} selected={sel && selection.length === 1} />}
                   {r.type === 'pagebreak' && <span>Seitenumbruch</span>}
                 </div>
               );
