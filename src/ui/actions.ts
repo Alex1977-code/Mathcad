@@ -8,6 +8,7 @@ import { getActiveEditor } from './editing';
 import { MARGIN, regionElements, separateRegions, snap } from './layout';
 import { downloadBlob, pickFile } from './files';
 import { parseDelimited } from '../engine/datafiles';
+import { pwa } from './pwa';
 import { quickPlotAtCursor } from './smart';
 import { cursorOrDefault, imageRegionFromFile, insertForeign, regionsFromText, regionsHtml, regionsPlainText } from './clipboard';
 
@@ -327,6 +328,7 @@ export interface AppHandlers {
   exportHtml: () => void; exportDocx: () => void; print: () => void; toggleTheme: () => void; showReport: () => void;
   notify: (text: string, err?: boolean) => void;
   openRecent: (key: string) => void;
+  installApp: () => void;
   exportMcdx: () => void;
 }
 let handlers: AppHandlers | null = null;
@@ -350,6 +352,7 @@ export function commands(): Command[] {
     { id: 'html', group: 'Datei', label: 'Als HTML exportieren', run: () => app.exportHtml() },
     { id: 'pagesetup', group: 'Datei', label: 'Kopf- und Fußzeile, Projekt, Bearbeiter …', run: () => store.set({ pageSetup: true }), tags: 'seite einrichten kopfzeile fußzeile seitenzahl' },
     { id: 'print', group: 'Datei', label: 'Drucken / als PDF speichern', keys: 'Strg+P', run: () => app.print() },
+    { id: 'install', group: 'Datei', label: 'Als App installieren (offline nutzbar)', run: () => app.installApp(), when: () => pwa.canInstall, tags: 'pwa offline desktop installieren' },
     { id: 'example', group: 'Datei', label: 'Beispiel öffnen', run: () => app.openExample() },
     { id: 'undo', group: 'Bearbeiten', label: 'Rückgängig', keys: 'Strg+Z', run: () => store.undo() },
     { id: 'redo', group: 'Bearbeiten', label: 'Wiederholen', keys: 'Strg+Y', run: () => store.redo() },

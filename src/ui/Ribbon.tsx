@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { COMMON_UNITS } from '../engine/units';
 import { renderLatex } from './katex';
 import { RecentList } from './RecentList';
+import { pwa } from './pwa';
 import { store, useStore, readPref, writePref } from './store';
 import {
   alignSelection, app, canPaste, changeDecimals, copySelection, deleteSelection, duplicateSelection, insertDataFile, insertImage, insertMatrix, insertSlider, insertTable,
@@ -130,6 +131,7 @@ export function Ribbon() {
               <RecentList compact onPick={close} />
               <hr />
               <button onClick={() => { close(); app.openExample(); }}>Beispiel öffnen</button>
+              {pwa.canInstall && <button onClick={() => { close(); app.installApp(); }}>Als App installieren …</button>}
             </>
           )}
         </Dropdown>

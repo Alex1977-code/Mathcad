@@ -13,6 +13,7 @@ import { autosave, downloadBlob, exportHtml, htmlBlob, loadAutosave, pickFileFor
 import { addRecent, openRecent, type FileSystemFileHandleLike } from './recent';
 import { makeDocx, withLightTheme } from './exporters';
 import { installPrintHooks } from './print';
+import { applyUpdate, installApp, onPwaChange, pwa, registerOffline } from './pwa';
 import { exampleWorksheet } from './examples';
 import {
   duplicateSelection, handleCopyEvent, handlePasteEvent, insertDataFile, insertMatrix, isDataFile, recalcNow, selectAll, separateAll, setAppHandlers, setZoom, showSide, toggleAutoCalc,
@@ -58,6 +59,13 @@ export function App() {
 
   useEffect(() => { if (recalcTick) recalc(); }, [recalcTick]);
   useEffect(() => { installPrintHooks(); }, []);
+  // offline operation: service worker, update notice, network state
+  const [, setPwaTick] = useState(0);
+  useEffect(() => {
+    const off = onPwaChange(() => setPwaTick(n => n + 1));
+    registerOffline((text) => notify(text));
+    return off;
+  }, []);
   const stale = !autoCalc && !!computedWs && computedWs !== ws;
 
   const notify = (text: string, err = false) => {
@@ -163,6 +171,7 @@ export function App() {
     openFile: () => openFile(), save: (as) => save(as), newDoc, openExample,
     exportHtml: () => { exportHtml(store.get().ws).catch(e => notify('Export fehlgeschlagen: ' + (e as Error).message, true)); }, print: () => setTimeout(() => window.print(), 50),
     exportDocx: () => { void exportDocx(); },
+    installApp: () => { installApp().then(ok => { if (ok) notify('FormelWerk wurde als App installiert'); }).catch(() => undefined); },
     exportMcdx: () => { void exportMcdx(); },
     openRecent: (key: string) => { void openRecentEntry(key); },
     notify: (text: string, err?: boolean) => notify(text, err),
@@ -316,6 +325,7 @@ export function App() {
           </button>
         )}
         <span className="status-item hide-narrow">{ws.regions.length} {ws.regions.length === 1 ? "Bereich" : "Bereiche"}</span>
+        {!pwa.online && <span className="status-item" title={pwa.offlineReady ? 'Keine Internetverbindung – FormelWerk arbeitet offline weiter' : 'Keine Internetverbindung'}><span className="pill warn">Offline</span></span>}
         <div className="spacer" />
         <span className="status-item hide-narrow muted">{ws.settings.decimals} Nachkommastellen · {ws.settings.decimalComma ? 'Komma' : 'Punkt'}</span>
         <span className="zoom">
@@ -331,6 +341,7 @@ export function App() {
       <PageSetupDialog />
       <CommandPalette />
       {toast && <div className={`toast${toast.err ? ' err' : ''}`} role="status">{toast.text}</div>}
+      {pwa.updateWaiting && <div className="toast update" role="status">Neue Version von FormelWerk verfügbar <button onClick={applyUpdate}>Neu laden</button></div>}
       {dragOver && <div className="drop-overlay">Datei hier ablegen – .fwk, .xmcd oder .mcdx</div>}
     </div>
   );

@@ -422,6 +422,54 @@ try {
   await page.waitForSelector('.toast.err');
   ok((await page.locator('.toast.err').innerText()).includes('.xmcd'), 'Altes .mcd-Format: verständlicher Hinweis auf .xmcd');
 
+  /* 15 · slider and written file */
+  {
+    await page.click('text=Datei'); await page.click('.menu >> text=Neu');
+    await page.waitForSelector('.welcome');
+    const pg = await page.locator('.page').boundingBox();
+    await page.mouse.click(pg.x + 60, pg.y + 60);
+    await page.keyboard.press('Control+k'); await page.waitForSelector('.palette input'); await page.locator('.palette input').fill('Schieberegler'); await page.locator('.palette input').press('Enter');
+    await page.waitForSelector('.slider-region');
+    await page.mouse.click(pg.x + 60, pg.y + 170);
+    for (const t of ['a*10=', 'WRITECSV("werte.csv",[a,2;3,4])']) { await page.keyboard.type(t); await page.keyboard.press('Enter'); }
+    await page.waitForTimeout(400); await idle();
+    const before = (await page.locator('.math-region').first().innerText()).replace(/\s+/g, '');
+    const sb = await page.locator('.sl-range').boundingBox();
+    await page.mouse.move(sb.x + sb.width / 2, sb.y + sb.height / 2); await page.mouse.down(); await page.mouse.move(sb.x + sb.width * 0.8, sb.y + sb.height / 2, { steps: 6 }); await page.mouse.up();
+    await page.waitForTimeout(400); await idle();
+    const after = (await page.locator('.math-region').first().innerText()).replace(/\s+/g, '');
+    ok(before === 'a⋅10=50' && /a⋅10=8\d/.test(after), `Schieberegler: Ziehen rechnet mit (${before} → ${after})`);
+    const dlc = page.waitForEvent('download');
+    await page.locator('.file-chip').click();
+    const csvOut = readFileSync(await (await dlc).path(), 'utf8');
+    ok(/^8(\.\d+)?,2\n3,4\n$/.test(csvOut), `WRITECSV: geschriebene Datei zum Herunterladen (${JSON.stringify(csvOut)})`);
+    await shot('17-regler.png');
+  }
+
+  /* 16 · offline: everything is cached by the service worker */
+  {
+    await page.evaluate(() => navigator.serviceWorker.ready);
+    await page.waitForFunction(() => !!navigator.serviceWorker.controller, null, { timeout: 20000 });
+    await page.context().setOffline(true);
+    await page.reload();
+    await page.waitForSelector('.slider-region', { timeout: 20000 });
+    const pg = await page.locator('.page').boundingBox();
+    await page.mouse.click(pg.x + 400, pg.y + 60);
+    await page.keyboard.type('3 kN*2 m= kN*m'); await page.keyboard.press('Enter');
+    await page.waitForTimeout(400); await idle();
+    const offCalc = (await lastRegionText()).replace(/\s+/g, '');
+    const fcOff = page.waitForEvent('filechooser');
+    await page.click('.topbar >> text=Importieren');
+    await (await fcOff).setFiles(join(root, 'tests/fixtures/mathcad/prime/trig.mcdx'));
+    await page.waitForSelector('.dialog', { timeout: 20000 });
+    await idle();
+    const offImport = (await page.locator('.dialog .stat').nth(2).innerText()).replace(/\s+/g, ' ');
+    await page.click('.dialog >> text=Weiter');
+    ok(/=6kN⋅m/.test(offCalc) && offImport.includes('19/19') && (await page.locator('.pill.warn', { hasText: 'Offline' }).count()) === 1,
+      `Offline-Betrieb: neu geladen, gerechnet (${offCalc}) und Mathcad-Datei importiert (${offImport}) ohne Netz`);
+    await page.context().setOffline(false);
+  }
+
   ok(errors.length === 0, `Keine JavaScript-Fehler im Browser${errors.length ? ': ' + errors.join(' | ') : ''}`);
 } catch (e) {
   failures++;

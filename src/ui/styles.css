@@ -703,3 +703,5 @@ button.status-item:hover { background: var(--bg-hover); }
 .slider-region .sl-settings input { width: 62px; border: 1px solid var(--border); border-radius: 5px; padding: 3px 5px; background: var(--bg); color: var(--text); font: 12.5px var(--font-ui); text-transform: none; }
 @media print { .slider-region .sl-settings { display: none; } }
 .region.slider-region.selected { z-index: 12; }
+.toast.update { bottom: 76px; display: flex; align-items: center; gap: 12px; }
+.toast.update button { border: 0; border-radius: 6px; padding: 4px 10px; background: #fff; color: #1d2330; font-weight: 600; cursor: pointer; }
