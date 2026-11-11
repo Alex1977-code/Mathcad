@@ -15,7 +15,9 @@ import { lookupUnit } from '../engine/units';
 import { APP_XML, CALCULATION_XML, PRESENTATION_XML } from './mcdxTemplate';
 import type { ComputeResult } from '../engine/worksheet';
 import { headerFooter, pageVars, templateParts } from '../engine/pageinfo';
-import { cellValue } from '../engine/datafiles';
+import { FILE_BUILTINS, cellValue, setDataFiles } from '../engine/datafiles';
+import { isMatrix, matrixRows, type Val } from '../engine/values';
+import type { Matrix } from 'mathjs';
 
 const NS_WS = 'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:ve="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:ws="http://schemas.mathsoft.com/worksheet50" xmlns:ml="http://schemas.mathsoft.com/math50" xmlns:u="http://schemas.mathsoft.com/units10" xmlns:p="http://schemas.mathsoft.com/provenance10" xmlns="http://schemas.mathsoft.com/worksheet50"';
 const XAML_NS = 'http://schemas.microsoft.com/winfx/2006/xaml/presentation';
@@ -27,10 +29,13 @@ class ExportError extends Error {}
 type DomNode = globalThis.Node;
 
 /** Names Prime writes as keywords. */
-const KEYWORDS: Record<string, string> = { Find: 'find', find: 'find', Minerr: 'minerr', minerr: 'minerr', Maximize: 'maximize', Minimize: 'minimize' };
+const KEYWORDS: Record<string, string> = { Find: 'find', find: 'find', Minerr: 'minerr', minerr: 'minerr', Maximize: 'maximize', Minimize: 'minimize', Odesolve: 'odesolve', odesolve: 'odesolve' };
+/** Functions that read attached data files: their data is embedded as a matrix (a .mcdx carries no data files). */
+const READERS = new Set(['READCSV', 'READPRN', 'READEXCEL', 'READFILE']);
+const EMBED_LIMIT = 50000;
 const CONSTANTS = new Set(['π', 'e', '∞', 'g']);
 
-interface Ctx { defined: Set<string>; warnings: string[]; /** Parameters, bound and local variables in scope. */ local: Set<string>[] }
+interface Ctx { defined: Set<string>; warnings: string[]; /** Parameters, bound and local variables in scope. */ local: Set<string>[]; /** Attached files whose data was embedded. */ embedded: Set<string> }
 
 const isLocal = (ctx: Ctx, n: string) => ctx.local.some(s => s.has(n));
 function scoped<T>(ctx: Ctx, names: string[], fn: () => T): T { ctx.local.push(new Set(names)); try { return fn(); } finally { ctx.local.pop(); } }
@@ -40,6 +45,12 @@ function scoped<T>(ctx: Ctx, names: string[], fn: () => T): T { ctx.local.push(n
 function idXml(name: string, ctx: Ctx, role: 'var' | 'fn' | 'auto' = 'auto'): string {
   let label: string;
   let n = name;
+  // derivative names of ODE solve blocks: y', y'' → y′, y′′ (in Mathcad the prime is part of the name)
+  const primes = /^[^']+?('+)$/.exec(n)?.[1].length ?? 0;
+  if (primes) {
+    const base = n.slice(0, -primes);
+    return `<ml:id labels="${ctx.defined.has(base) || role !== 'fn' ? 'VARIABLE' : 'FUNCTION'}" xml:space="preserve">${esc(base)}${'′'.repeat(primes)}</ml:id>`;
+  }
   if (n.startsWith("'")) { n = n.slice(1); label = lookupUnit(n, true) !== null ? 'UNIT' : 'CONSTANT'; }
   else if (isLocal(ctx, n)) label = 'VARIABLE';
   else if (role === 'fn') label = ctx.defined.has(n) ? 'VARIABLE' : 'FUNCTION';
@@ -86,6 +97,10 @@ function X(n: Node, ctx: Ctx): string {
     case 'nroot': return apply('nthRoot', X(n.n, ctx), X(n.a, ctx));
     case 'call': {
       if (n.name === 'row' && n.args.length === 2) return apply('matrow', X(n.args[0], ctx), X(n.args[1], ctx));
+      if (READERS.has(n.name) && !ctx.defined.has(n.name) && n.args.length && n.args.every(a => a.k === 'str')) {
+        const lit = embedData(n.name, n.args.map(a => (a as { v: string }).v), ctx);
+        if (lit) return X(lit, ctx);
+      }
       const kw = KEYWORDS[n.name];
       const fn = kw ? `<ml:id labels="KEYWORD" algorithm="" xml:space="preserve">${kw}</ml:id>` : idXml(n.name, ctx, 'fn');
       return `<ml:apply>${fn}${seq(n.args.map(a => X(a, ctx)))}</ml:apply>`;
@@ -120,6 +135,18 @@ function X(n: Node, ctx: Ctx): string {
     }
     case 'program': return program(n.body, ctx);
   }
+}
+
+/** The data an attached file yields for a READ call, as a matrix literal (null: not attached or too large). */
+function embedData(fn: string, args: string[], ctx: Ctx): Node | null {
+  let v: Val;
+  try { v = FILE_BUILTINS[fn](args); } catch { return null; }   // not attached (e.g. written by the sheet itself): Prime reads it
+  const cell = (c: Val): Node => (typeof c === 'string' ? { k: 'str', v: c } : typeof c !== 'number' || Number.isNaN(c) ? { k: 'id', name: 'NaN' } : c < 0 ? { k: 'un', op: 'neg', a: { k: 'num', v: -c } } : { k: 'num', v: c });
+  if (!isMatrix(v)) { ctx.embedded.add(args[0]); return cell(v); }
+  const rows = matrixRows(v as Matrix);
+  if (rows.length * (rows[0]?.length ?? 0) > EMBED_LIMIT) { ctx.warnings.push(`„${args[0]}“ ist zu groß zum Einbetten – die Datei neben die .mcdx legen`); return null; }
+  ctx.embedded.add(args[0]);
+  return { k: 'matrix', rows: rows.map(r => r.map(cell)) };
 }
 
 /* --------------------------------- programs --------------------------------- */
@@ -303,6 +330,8 @@ const findCall = (st: MathStmt | null): string[] | null => {
   let names: string[] | null = null;
   walk(st.expr, n => {
     if (n.k === 'call' && (KEYWORDS[n.name] === 'find' || KEYWORDS[n.name] === 'minerr')) names = n.args.filter(a => a.k === 'id').map(a => (a as { name: string }).name);
+    // an ODE block has no guess values
+    if (n.k === 'call' && KEYWORDS[n.name] === 'odesolve') names = [];
   });
   return names;
 };
@@ -311,7 +340,8 @@ export interface McdxOptions { /** Calculated results (symbolic results are stor
 
 export async function buildMcdx(ws: Worksheet, opts: McdxOptions = {}): Promise<McdxResult> {
   const warnings: string[] = [];
-  const ctx: Ctx = { defined: new Set(), warnings, local: [] };
+  const ctx: Ctx = { defined: new Set(), warnings, local: [], embedded: new Set() };
+  setDataFiles(ws.files);
   // a slider is written as the definition it stands for (Prime's slider control format is not documented)
   const order = sortRegions(ws.regions).map(r => (r.type === 'slider' ? { id: r.id, type: 'math', x: r.x, y: r.y, src: sliderSrc(r) } as MathRegion : r));
   const parsed = new Map<string, MathStmt | null>();
@@ -462,6 +492,11 @@ export async function buildMcdx(ws: Worksheet, opts: McdxOptions = {}): Promise<
     }
   }
 
+  // attached files that are used but could not be embedded (name not given as plain text, or too large)
+  const emb = new Set([...ctx.embedded].map(n => n.replace(/^.*[\\/]/, '').toLowerCase()));
+  for (const f of ws.files ?? []) {
+    if (!emb.has(f.name.toLowerCase()) && order.some(r => r.type === 'math' && r.src.includes(f.name))) warnings.push(`Angehängte Datei „${f.name}“ ist nicht in der .mcdx enthalten – neben die Datei legen`);
+  }
   const worksheetXml = `<?xml version="1.0" encoding="utf-8"?><worksheet msg-id="NoMessage" ${NS_WS}><regions>${out.join('')}</regions></worksheet>`;
 
   // header and footer: left / centre / right; page numbers become Prime's page number field

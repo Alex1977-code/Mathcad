@@ -59,6 +59,10 @@ function rawIdName(e: Element): { name: string; original: string; shown: string 
   const subAttr = e.getAttribute('subscript');
   if (subAttr) sub = sub ? sub + '.' + subAttr : subAttr;
   base = base.trim();
+  // derivative names of ODE solve blocks (y′, y′′ – the prime is part of the name in Mathcad): y', y''
+  const pm = /^(.*?[^′`])([′`]+)$/.exec(base);
+  const primes = pm ? pm[2].length : 0;
+  if (pm) base = pm[1];
   // Mathcad allows literal subscripts typed with "." in the name itself
   let name = cleanPart(base, false);
   if (!name) name = 'x';
@@ -68,6 +72,7 @@ function rawIdName(e: Element): { name: string; original: string; shown: string 
     if (s) name = name.includes('_') ? `${name}.${s}` : `${name}_${s}`;
   }
   name = NAME_FIX[name] ?? name;
+  if (primes) return { name: name + "'".repeat(primes), original: `${base}${'′'.repeat(primes)}\u0000${sub}`, shown: `${base}${'′'.repeat(primes)}` };
   return { name, original: `${base}\u0000${sub}`, shown: sub.trim() ? `${base || '(leer)'}[${sub.trim()}]` : base || '(leer)' };
 }
 

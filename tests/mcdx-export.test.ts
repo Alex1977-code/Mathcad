@@ -114,4 +114,34 @@ describe('Export nach Mathcad Prime (.mcdx)', () => {
     expect(warnings).toEqual([]);
     expect(shown(back)).toEqual(['24']);
   });
+
+  it('Differentialgleichung: Strich-Namen y′, Odesolve als Solve-Block', async () => {
+    const ws = sheet(['Given', "y''(t) + 4*y(t) == 0", 'y(0) == 1', "y'(0) == 0", 'y := Odesolve(t, 5)', 'y(1) =']);
+    const { back, warnings, zip } = await roundTrip(ws);
+    expect(warnings).toEqual([]);
+    const xml = await zip.file('mathcad/worksheet.xml')!.async('string');
+    expect(xml).toContain('xml:space="preserve">y′′</ml:id>');
+    expect(xml).toContain('xml:space="preserve">y′</ml:id>');
+    expect(xml).toContain('<ml:id labels="KEYWORD" algorithm="" xml:space="preserve">odesolve</ml:id>');
+    expect(xml).toMatch(/<solveblock>.*solve-block-category="constraint".*solve-block-category="solver"/s);
+    expect(shown(back)).toEqual(shown(ws));
+    expect(Number(shown(back)[0])).toBeCloseTo(Math.cos(2), 3);
+  });
+
+  it('angehängte Dateien werden als Matrix eingebettet', async () => {
+    const ws = sheet(['M := READCSV("messung.csv")', 'M[2, 1] =', 'x := READEXCEL("mappe.xlsx", "B2")', 'x*2 =', 'N := READCSV("fehlt.csv")']);
+    ws.files = [
+      { name: 'messung.csv', kind: 'text', text: 't;s\n0;0\n1;4,9' },
+      { name: 'mappe.xlsx', kind: 'xlsx', sheets: [{ name: 'Tabelle1', cells: [['a', 'b'], [1, 21]] }] },
+    ];
+    const { blob, warnings } = await buildMcdx(ws);
+    expect(warnings).toEqual([]);
+    const buf = Buffer.from(await blob.arrayBuffer());
+    const xml = await (await JSZip.loadAsync(buf)).file('mathcad/worksheet.xml')!.async('string');
+    expect(xml).not.toContain('messung.csv');
+    expect(xml).toContain('<ml:matrix rows="3" cols="2">');
+    expect(xml).toContain('fehlt.csv');                      // not attached: the call stays
+    const back = await loadWorksheetFile('x.mcdx', buf);     // no attached files any more
+    expect(shown(back).slice(0, 2)).toEqual(['4.9', '42']);
+  });
 });
