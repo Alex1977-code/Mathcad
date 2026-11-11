@@ -8,15 +8,27 @@
  */
 import type { Matrix } from 'mathjs';
 import type { DataFile } from './model';
-import { CalcError, makeMatrix, type Val } from './values';
+import type { Unit } from 'mathjs';
+import { CalcError, isMatrix, isUnit, makeMatrix, matrixRows, type Val } from './values';
 
 let files: DataFile[] = [];
 export function setDataFiles(f: DataFile[] | undefined) { files = f ?? []; }
 
+/** Files written by WRITEPRN, WRITECSV, WRITEEXCEL in this calculation (by lower-case name). */
+let written = new Map<string, DataFile>();
+/** Files written while the current region is evaluated. */
+let log: DataFile[] = [];
+export function getWritten(): Map<string, DataFile> { return new Map(written); }
+export function setWritten(m: Map<string, DataFile>) { written = new Map(m); }
+export function beginWrites() { log = []; }
+export function endWrites(): DataFile[] { const l = log; log = []; return l; }
+const baseName = (name: string) => name.replace(/^.*[\\/]/, '');
+
 function find(name: Val, fn: string): DataFile {
   if (typeof name !== 'string') throw new CalcError(`${fn}: Dateiname als Text, z. B. ${fn}("messung.csv")`);
-  const base = name.replace(/^.*[\\/]/, '').toLowerCase();
-  const f = files.find(x => x.name.toLowerCase() === base);
+  const base = baseName(name).toLowerCase();
+  // a file written earlier in the worksheet is read back (as on disk in Mathcad)
+  const f = written.get(base) ?? files.find(x => x.name.toLowerCase() === base);
   if (!f) throw new CalcError(`${fn}: Datei „${name}“ ist nicht angehängt – Einfügen → Datei einlesen`);
   return f;
 }
@@ -73,7 +85,14 @@ function cellRef(ref: string): [number, number] {
   return [parseInt(m[2], 10) - 1, col];
 }
 
-function readExcel(f: DataFile, range: Val | undefined): Matrix {
+function readExcel(f: DataFile, range: Val | undefined): Val {
+  const m = readExcelRange(f, range);
+  // a single cell ("B7") is its value
+  if (typeof range === 'string' && !range.includes(':') && /[A-Za-z]\$?\d+\s*$/.test(range) && m.size().every(n => n === 1)) return m.get([0, 0]) as Val;
+  return m;
+}
+
+function readExcelRange(f: DataFile, range: Val | undefined): Matrix {
   if (f.kind !== 'xlsx' || !f.sheets?.length) {
     // a CSV handed to READEXCEL: read it as delimited text
     return toMatrix(parseDelimited(f.text ?? ''), 'READEXCEL');
@@ -129,6 +148,71 @@ export const FILE_BUILTINS: Record<string, Builtin> = {
     return toMatrix(parseDelimited(f.text ?? csvOf(f)), 'READFILE');
   },
 };
+
+/* --------------------------------- writing --------------------------------- */
+
+/** Matrix (or scalar) as rows of cells: quantities in SI, strings as they are. */
+function cellsOf(v: Val, fn: string): (number | string)[][] {
+  const one = (x: Val): number | string => {
+    if (typeof x === 'string') return x;
+    if (typeof x === 'number') return x;
+    if (isUnit(x)) { const q = (x as Unit).toSI(); return (q as unknown as { value: number }).value; }
+    throw new CalcError(`${fn}: nur Zahlen und Texte können geschrieben werden`);
+  };
+  if (isMatrix(v)) return matrixRows(v as Matrix).map(r => r.map(one));
+  return [[one(v)]];
+}
+const numText = (v: number) => (Number.isNaN(v) ? 'NaN' : String(v));
+const fileArg = (v: Val, fn: string): string => {
+  if (typeof v !== 'string' || !v.trim()) throw new CalcError(`${fn}: Dateiname als Text, z. B. ${fn}("ergebnis.csv", M)`);
+  return baseName(v);
+};
+function store(f: DataFile) { written.set(f.name.toLowerCase(), f); log.push(f); }
+
+const writePrn = (append: boolean): Builtin => (args) => {
+  const fn = append ? 'APPENDPRN' : 'WRITEPRN';
+  nargs(fn, args, 2, 2);
+  const name = fileArg(args[0], fn);
+  const text = cellsOf(args[1], fn).map(r => r.map(c => (typeof c === 'number' ? numText(c) : `"${c.replace(/"/g, '""')}"`)).join(' ')).join('\n') + '\n';
+  const old = append ? (written.get(name.toLowerCase()) ?? files.find(x => x.name.toLowerCase() === name.toLowerCase())) : undefined;
+  store({ name, kind: 'text', text: (old?.text ?? '') + text });
+  return args[1];
+};
+
+export const WRITE_BUILTINS: Record<string, Builtin> = {
+  WRITEPRN: writePrn(false),
+  APPENDPRN: writePrn(true),
+  WRITECSV: (args) => {
+    nargs('WRITECSV', args, 2, 2);
+    const name = fileArg(args[0], 'WRITECSV');
+    const q = (c: string) => (/[",;\n]/.test(c) ? `"${c.replace(/"/g, '""')}"` : c);
+    store({ name, kind: 'text', text: cellsOf(args[1], 'WRITECSV').map(r => r.map(c => (typeof c === 'number' ? (Number.isNaN(c) ? '' : String(c)) : q(c))).join(',')).join('\n') + '\n' });
+    return args[1];
+  },
+  /** WRITEEXCEL("datei.xlsx", M [, "Blatt1!B2"]): the workbook is built when it is downloaded. */
+  WRITEEXCEL: (args) => {
+    nargs('WRITEEXCEL', args, 2, 3);
+    const name = fileArg(args[0], 'WRITEEXCEL');
+    let sheet = 'Tabelle1', r0 = 0, c0 = 0;
+    if (args[2] !== undefined) {
+      if (typeof args[2] !== 'string') throw new CalcError('WRITEEXCEL: Bereich als Text, z. B. "Tabelle1!B2"');
+      let spec = args[2];
+      const bang = spec.lastIndexOf('!');
+      if (bang >= 0) { sheet = spec.slice(0, bang).replace(/^'|'$/g, '') || sheet; spec = spec.slice(bang + 1); }
+      if (spec.trim()) [r0, c0] = cellRef(spec.split(':')[0]);
+    }
+    const data = cellsOf(args[1], 'WRITEEXCEL');
+    const cells: (number | string | null)[][] = [];
+    for (let i = 0; i < r0; i++) cells.push([]);
+    for (const r of data) cells.push([...Array(c0).fill(null), ...r.map(c => (typeof c === 'number' && Number.isNaN(c) ? null : c))]);
+    // other sheets of a workbook written before are kept
+    const old = written.get(name.toLowerCase());
+    const sheets = [...(old?.kind === 'xlsx' ? old.sheets ?? [] : []).filter(s => s.name !== sheet), { name: sheet, cells }];
+    store({ name, kind: 'xlsx', sheets });
+    return args[1];
+  },
+};
+export const WRITE_NAMES = new Set(Object.keys(WRITE_BUILTINS));
 
 /** First sheet of a workbook as CSV (for READCSV/READPRN on an Excel file). */
 function csvOf(f: DataFile): string {

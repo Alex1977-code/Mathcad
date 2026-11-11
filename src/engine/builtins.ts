@@ -11,7 +11,7 @@ import { hasOffset, mkQ, qSum, withValue } from './quantity';
 import { EXTRA_BUILTINS } from './builtins2';
 import { ODE_BUILTINS, ODE_LAZY } from './odeBuiltins';
 import { FIT_BUILTINS } from './fitting';
-import { FILE_BUILTINS } from './datafiles';
+import { FILE_BUILTINS, WRITE_BUILTINS } from './datafiles';
 import { brent, limitNumeric, pnormStd, qnormStd, rootFromGuess, solveSystem } from './numeric';
 import { DISTRIBUTIONS, distFunction, distRandom, gammaQ, lgamma, percentile, setStatsSeed } from './stats';
 
@@ -1008,7 +1008,7 @@ export const BUILTIN_NAMES = [...Object.keys(BUILTINS), ...Object.keys(LAZY_BUIL
 export function isBuiltinFunction(name: string) { return name in BUILTINS || name in LAZY_BUILTINS; }
 
 // further Mathcad functions (interpolation, prediction, outlier tests, rank statistics …)
-Object.assign(BUILTINS, EXTRA_BUILTINS, ODE_BUILTINS, FIT_BUILTINS, FILE_BUILTINS);
+Object.assign(BUILTINS, EXTRA_BUILTINS, ODE_BUILTINS, FIT_BUILTINS, FILE_BUILTINS, WRITE_BUILTINS);
 Object.assign(LAZY_BUILTINS, ODE_LAZY);
 
 // lookup tables without prototype: names like "toString" or "__proto__" are not functions/constants

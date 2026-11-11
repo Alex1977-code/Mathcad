@@ -49,4 +49,33 @@ describe('Differentialgleichungen', () => {
     expect(err(['Given', "y'(t) == -y(t)", 'y(0) == 1', 'y := Odesolve(t, 5)', 'y(7) ='])).toMatch(/nur zwischen 0 und 5/);
     expect(err(['Given', "y''(t) == -y(t)", 'y(0) == 1', 'y := Odesolve(t, 5)'])).toMatch(/Anfangswert y'\(0\) fehlt/);
   });
+
+  it('Randwertprobleme: Bedingungen am Anfangs- und Endpunkt (Schießverfahren)', () => {
+    // y'' = −y, y(0) = 0, y(π/2) = 2  →  y = 2·sin t
+    expect(last(['Given', "y''(t) == -y(t)", 'y(0) == 0', 'y(π/2) == 2', 'y := Odesolve(t, π/2)', 'y(0.7) ='])).toBeCloseTo(2 * Math.sin(0.7), 6);
+    // beam: w'''' = q/EI, simply supported: w(0) = w''(0) = 0, w(L) = w''(L) = 0  →  w(L/2) = 5·q·L⁴/(384·EI)
+    expect(last(['q := 3', 'EI := 2', 'L := 4', 'Given', "w''''(x) == q/EI", 'w(0) == 0', "w''(0) == 0", 'w(L) == 0', "w''(L) == 0", 'w := Odesolve(x, L)', 'w(L/2) ='])).toBeCloseTo(5 * 3 * 4 ** 4 / (384 * 2), 6);
+    // nonlinear (Bratu): y'' + e^y = 0, y(0) = y(1) = 0  →  y(0.5) = 0.140539…
+    expect(last(['Given', "y''(t) + exp(y(t)) == 0", 'y(0) == 0', 'y(1) == 0', 'y := Odesolve(t, 1)', 'y(0.5) ='])).toBeCloseTo(0.1405392, 5);
+    // derivative condition at the end:  y'' = 2, y(0) = 1, y'(3) = 0  →  y = t² − 6t + 1
+    expect(last(['Given', "y''(t) == 2", 'y(0) == 1', "y'(3) == 0", 'y := Odesolve(t, 3)', 'y(2) ='])).toBeCloseTo(4 - 12 + 1, 7);
+    const err = (lines: string[]) => run(lines).pop()!.error?.message ?? '';
+    expect(err(['Given', "y''(t) == -y(t)", 'y(0) == 0', 'y(1) == 2', 'y := Odesolve(t, 5)'])).toMatch(/Endpunkt 5 einer der beiden Punkte/);
+  });
+
+  it('Einheiten: Lösung und Argument tragen Einheiten, Gleichungen werden auf Dimension geprüft', () => {
+    const txt = (lines: string[]) => { const r = run(lines).pop()!; return r.error ? 'ERROR: ' + r.error.message : r.resultText; };
+    // v' = −g, v(0 s) = 10 m/s
+    expect(txt(['Given', "v'(t) == -g", 'v(0 s) == 10 m/s', 'v := Odesolve(t, 2 s)', 'v(1 s) = m/s'])).toBe('0.193');
+    // x'' = −g, x(0) = 0 m, x'(0) = 5 m/s
+    expect(txt(['Given', "x''(t) == -g", 'x(0 s) == 0 m', "x'(0 s) == 5 m/s", 'x := Odesolve(t, 1 s)', 'x(0.5 s) = cm'])).toBe('127.417');
+    // RC discharge with units of the time constant
+    expect(txt(['R := 2 kΩ', 'C := 5 μF', 'Given', "u'(t) == -u(t)/(R*C)", 'u(0 s) == 12 V', 'u := Odesolve(t, 50 ms)', 'u(10 ms) = V'])).toBe('4.415');
+    expect(txt(['Given', "y'(t) == 1 m", 'y(0 s) == 1 m', 'y := Odesolve(t, 2 s)'])).toMatch(/^ERROR: .*Einheit/);
+  });
+
+  it('Ableitungsoperator d/dt statt Strich', () => {
+    expect(last(['Given', 'deriv(y(t), t) == -y(t)', 'y(0) == 1', 'y := Odesolve(t, 3)', 'y(1) ='])).toBeCloseTo(Math.exp(-1), 8);
+    expect(last(['Given', 'deriv(y(t), t, 2) == -4*y(t)', 'y(0) == 0', "y'(0) == 2", 'y := Odesolve(t, 3)', 'y(1) ='])).toBeCloseTo(Math.sin(2), 7);
+  });
 });

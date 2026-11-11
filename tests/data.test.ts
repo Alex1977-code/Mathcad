@@ -6,6 +6,8 @@ import { computeWorksheet, type RegionResult } from '../src/engine/worksheet';
 import { emptyWorksheet, normalizeWorksheet, type DataFile, type Region, type Worksheet } from '../src/engine/model';
 import { parseDelimited } from '../src/engine/datafiles';
 import { readXlsx } from '../src/import/xlsx';
+import { readXls } from '../src/import/xls';
+import { buildXlsx } from '../src/export/xlsxWrite';
 
 function sheet(lines: (string | Region)[], files?: DataFile[]): Worksheet {
   const ws = emptyWorksheet();
@@ -67,5 +69,49 @@ describe('Daten einlesen', () => {
     expect(txt(r[3])).toBe('2.667');
     expect(txt(r[4])).toBe('"a"');
     expect(txt(r[5])).toBe('0.625');
+  });
+
+  it('altes Excel-Format .xls (aus LibreOffice): Zahlen, Texte, Formelwerte, mehrere Blätter, lange Texttabelle', () => {
+    const f = readXls('alt.xls', readFileSync(join(__dirname, 'fixtures/data/alt.xls')));
+    expect(f.sheets!.map(s => s.name)).toEqual(['Messung', 'Zweites Blatt', 'Viele']);
+    const m = f.sheets![0].cells;
+    expect(m[0]).toEqual(['Zeit', 'Weg', 'Kommentar']);
+    expect(m[3]).toEqual([1, 5, 'Größe µ']);
+    expect(m[6][0]).toBe('Summe');
+    expect(m[6][1]).toBe(37.5);                      // cached result of =SUM(B2:B6)
+    expect(m[7].slice(0, 3)).toEqual([1234567.891, -3, 0.07]);
+    expect(f.sheets![1].cells).toEqual([['a', 'b'], [1, 2], [3, 4]]);
+    const v = f.sheets![2].cells;
+    expect(v.length).toBe(900);
+    for (const i of [0, 1, 137, 450, 899]) expect(v[i]).toEqual([`Text Nummer ${i} – ${'äöü ß '.repeat(6)}Ende${i}`, i * 1.5, `kurz${i}`]);
+    const r = run(['D := READEXCEL("alt.xls", "Messung!B2:B6")', 'sum(D) =', 'READEXCEL("alt.xls", "Viele!B900") ='], [f]);
+    expect(txt(r[1])).toBe('37.5');
+    expect(txt(r[2])).toBe('1348.5');
+    expect(() => readXls('x.xls', new Uint8Array(600))).toThrow(/keine Excel-97-2003-Datei/);
+  });
+
+  it('Schreiben: WRITEPRN, APPENDPRN, WRITECSV, WRITEEXCEL – Ausgabedateien und Wiedereinlesen', async () => {
+    const ws = sheet([
+      'M := [1, 2.5; 3, 4]', 'WRITEPRN("out.prn", M)', 'APPENDPRN("out.prn", [5, 6])', 'P := READPRN("out.prn")', 'P[2, 1] =',
+      'WRITECSV("werte.csv", [1.5 m, "a,b"; 2 km, "c"])', 'READCSV("werte.csv")[1, 0] =',
+      'x := WRITEEXCEL("erg.xlsx", M, "Daten!B2")', 'READEXCEL("erg.xlsx", "Daten!C3") =',
+      'WRITEPRN("alt.prn") := M*2', 'READPRN("alt.prn")[1, 1] =',
+    ]);
+    const res = computeWorksheet(ws);
+    const t = (i: number) => txt(res.results[`r${i}`]);
+    expect(Object.values(res.results).filter(r => r.error).map(r => r.error!.message)).toEqual([]);
+    expect(t(4)).toBe('6');
+    expect(t(6)).toBe('2000');
+    expect(t(8)).toBe('4');
+    expect(t(10)).toBe('8');
+    const out = new Map(res.outputs!.map(f => [f.name, f]));
+    expect([...out.keys()].sort()).toEqual(['alt.prn', 'erg.xlsx', 'out.prn', 'werte.csv']);
+    expect(out.get('out.prn')!.text).toBe('1 2.5\n3 4\n5 6\n');
+    expect(out.get('werte.csv')!.text).toBe('1.5,"a,b"\n2000,c\n');
+    // the workbook is a real .xlsx: read back with the own reader
+    const blob = await buildXlsx(out.get('erg.xlsx')!.sheets!);
+    const back = await readXlsx('erg.xlsx', await blob.arrayBuffer());
+    expect(back.sheets![0].name).toBe('Daten');
+    expect(back.sheets![0].cells).toEqual([[], [null, 1, 2.5], [null, 3, 4]]);
   });
 });

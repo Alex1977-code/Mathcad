@@ -7,7 +7,8 @@ import { store, useStore } from './store';
 import { PLOT_COLORS } from './regions/PlotRegionView';
 import { IconCheck, IconClose, IconPlus, IconTrash } from './icons';
 import { sortRegions } from '../engine/model';
-import { removeDataFile } from './actions';
+import { downloadDataFile, removeDataFile } from './actions';
+import type { DataFile } from '../engine/model';
 
 export type SideTab = 'vars' | 'problems' | 'outline' | 'format' | 'help';
 
@@ -101,16 +102,28 @@ function Variables({ result }: { result: ComputeResult | null }) {
           <span className="var-val" title={v.text}>{v.text}</span>
         </div>
       ))}
-      <DataFiles />
+      <DataFiles outputs={result?.outputs} />
     </>
   );
 }
 
 /** Data files attached to the document (read with READCSV, READPRN, READEXCEL). */
-function DataFiles() {
+function DataFiles({ outputs }: { outputs?: DataFile[] }) {
   const files = useStore(s => s.ws.files);
   return (
     <div className="data-files">
+      {!!outputs?.length && (
+        <>
+          <div className="panel-title small">Geschriebene Dateien</div>
+          {outputs.map(f => (
+            <div key={f.name} className="data-file out">
+              <span className="df-name" title={f.name}>{f.name}</span>
+              <span className="df-meta">{f.kind === 'xlsx' ? `${f.sheets?.length ?? 0} Blatt` : `${(f.text ?? '').split('\n').length - 1} Zeilen`}</span>
+              <button className="df-dl" title="Herunterladen" onClick={() => { void downloadDataFile(f); }}>⬇</button>
+            </div>
+          ))}
+        </>
+      )}
       <div className="panel-title small">Angehängte Dateien</div>
       {!files?.length && <div className="empty-hint">Keine. CSV- oder Excel-Dateien auf das Blatt ziehen oder Einfügen → Daten.</div>}
       {files?.map(f => (

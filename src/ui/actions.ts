@@ -6,7 +6,7 @@ import { newId, sortRegions, type DataFile, type MathRegion, type Region } from 
 import { store, writePref } from './store';
 import { getActiveEditor } from './editing';
 import { MARGIN, regionElements, separateRegions, snap } from './layout';
-import { pickFile } from './files';
+import { downloadBlob, pickFile } from './files';
 import { parseDelimited } from '../engine/datafiles';
 import { quickPlotAtCursor } from './smart';
 import { cursorOrDefault, imageRegionFromFile, insertForeign, regionsFromText, regionsHtml, regionsPlainText } from './clipboard';
@@ -57,7 +57,7 @@ export function insertTable(at?: { x: number; y: number }, init?: Partial<Region
   store.set({ cursor: { x: cur.x, y: snap(cur.y + 60 + 26 * ((r as { rows: unknown[] }).rows.length + 1)) } });
 }
 
-const DATA_EXT = /\.(csv|txt|prn|dat|tsv|xlsx)$/i;
+const DATA_EXT = /\.(csv|txt|prn|dat|tsv|xlsx|xls)$/i;
 export const isDataFile = (name: string) => DATA_EXT.test(name);
 
 /** Attach a data file (CSV, PRN, TXT, XLSX) to the document; the same name replaces the old file. */
@@ -66,6 +66,9 @@ export async function attachDataFile(file: File): Promise<DataFile> {
   if (/\.xlsx$/i.test(file.name)) {
     const { readXlsx } = await import('../import/xlsx');
     df = await readXlsx(file.name, await file.arrayBuffer());
+  } else if (/\.xls$/i.test(file.name)) {
+    const { readXls } = await import('../import/xls');
+    df = readXls(file.name, await file.arrayBuffer());
   } else {
     if (file.size > 20e6) throw new Error('Datei zu groß (höchstens 20 MB)');
     df = { name: file.name, kind: 'text', text: await file.text() };
@@ -76,7 +79,7 @@ export async function attachDataFile(file: File): Promise<DataFile> {
 
 /** Read a data file into the worksheet: attached, plus a formula M := READCSV("…") / READEXCEL("…") at the cursor. */
 export async function insertDataFile(file?: File | null, asTable = false) {
-  const f = file ?? await pickFile('.csv,.txt,.prn,.dat,.tsv,.xlsx');
+  const f = file ?? await pickFile('.csv,.txt,.prn,.dat,.tsv,.xlsx,.xls');
   if (!f) return;
   const df = await attachDataFile(f);
   const s = store.get();
@@ -95,6 +98,17 @@ export async function insertDataFile(file?: File | null, asTable = false) {
   const fn = df.kind === 'xlsx' ? 'READEXCEL' : /\.prn$/i.test(f.name) ? 'READPRN' : 'READCSV';
   store.addRegion(newMathRegion(cur.x, cur.y, `${base} := ${fn}("${f.name}")`));
   store.set({ cursor: { x: cur.x, y: snap(cur.y + 40) } });
+}
+
+/** Download a file written by the worksheet (WRITEPRN, WRITECSV, WRITEEXCEL). */
+export async function downloadDataFile(f: DataFile) {
+  try {
+    if (f.kind === 'xlsx') {
+      const { buildXlsx } = await import('../export/xlsxWrite');
+      const name = /\.xlsx$/i.test(f.name) ? f.name : f.name.replace(/\.[^.]*$/, '') + '.xlsx';
+      downloadBlob(name, await buildXlsx(f.sheets ?? []));
+    } else downloadBlob(f.name, new Blob([f.text ?? ''], { type: 'text/plain;charset=utf-8' }));
+  } catch (e) { app.notify('Datei konnte nicht erzeugt werden: ' + (e as Error).message, true); }
 }
 
 export function removeDataFile(name: string) {
@@ -342,7 +356,7 @@ export function commands(): Command[] {
     { id: 'text', group: 'Einfügen', label: 'Textbereich', keys: '"', run: () => insertRegion('text'), tags: 'notiz beschreibung' },
     { id: 'plot', group: 'Einfügen', label: 'X-Y-Diagramm', keys: '@', run: () => quickPlotAtCursor(), tags: 'diagramm plot graph kurve' },
     { id: 'table', group: 'Einfügen', label: 'Datentabelle', run: () => insertTable(), tags: 'tabelle daten messwerte excel' },
-    { id: 'datafile', group: 'Einfügen', label: 'Datei einlesen (CSV, Excel) …', run: () => { void insertDataFile(); }, tags: 'csv excel xlsx prn import daten readexcel readcsv' },
+    { id: 'datafile', group: 'Einfügen', label: 'Datei einlesen (CSV, Excel) …', run: () => { void insertDataFile(); }, tags: 'csv excel xlsx xls prn import daten readexcel readcsv' },
     { id: 'datatable', group: 'Einfügen', label: 'Datei als Datentabelle einfügen …', run: () => { void insertDataFile(null, true); }, tags: 'csv excel xlsx tabelle import' },
     { id: 'image', group: 'Einfügen', label: 'Bild …', run: () => insertImage() },
     { id: 'pagebreak', group: 'Einfügen', label: 'Seitenumbruch', run: () => insertRegion('pagebreak') },

@@ -530,6 +530,13 @@ function parseMathRegionInner(text: string): MathStmt {
   if (defIdx >= 0) {
     const global = toks[defIdx].v === '≡';
     const lhsSrc = head.slice(0, toks[defIdx].pos);
+    // Mathcad 15:  WRITEPRN("datei") := M   is the statement  WRITEPRN("datei", M)
+    const wr = /^\s*(WRITEPRN|APPENDPRN|WRITECSV|WRITEEXCEL)\s*\(/.exec(lhsSrc);
+    if (wr && !hasBody) {
+      const call = parseExpression(lhsSrc, false);
+      const value = parseExpression(head.slice(toks[defIdx].end), true);
+      if (call.k === 'call') return { kind: 'expr', expr: { ...call, args: [...call.args, value] } };
+    }
     const target = parseTarget(lhsSrc);
     for (const n of [target.name, ...(target.params ?? [])]) {
       if (RESERVED.has(n)) throw new ParseError(`„${n}“ ist ein reserviertes Wort und kann nicht definiert werden`, 0, lhsSrc.length);

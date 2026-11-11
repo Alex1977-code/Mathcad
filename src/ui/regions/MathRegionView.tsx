@@ -9,7 +9,7 @@ import { BUILTIN_NAMES, isBuiltinFunction } from '../../engine/builtins';
 import { renderLatex } from '../katex';
 import { store, useStore } from '../store';
 import { GREEK_NAMES, IDENT_RE, insertSnippet, setActiveEditor, toGreek } from '../editing';
-import { insertMatrix } from '../actions';
+import { downloadDataFile, insertMatrix } from '../actions';
 
 /* ------------------------------------------------------------------ */
 /* LaTeX composition                                                    */
@@ -110,6 +110,9 @@ export function MathRegionView({ region, result, editing, variables, showCheck, 
         ? <div className="math-view" title={tip} dangerouslySetInnerHTML={{ __html: renderLatex(latex) }} />
         : <div className="math-view math-placeholder">{region.src.trim() ? region.src : 'leer'}</div>}
       {err && <div className="error-chip">{err.message}</div>}
+      {!stale && !err && result?.files?.map(f => (
+        <button key={f.name} className="file-chip" title={`„${f.name}“ herunterladen`} onMouseDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); void downloadDataFile(f); }}>⬇ {f.name}</button>
+      ))}
       {showCheck && !stale && result?.check && result.check.status !== 'skipped' && (
         <span
           className={`check-badge ${result.check.status === 'match' ? 'ok' : 'bad'}`}

@@ -11,10 +11,10 @@ import {
 } from './values';
 import { escapeText, formatValue, formatReal, type FormatOptions, siUnitFactors, unitFactorsText } from './format';
 import { stmtLatex, toLatex, type LatexCtx } from './latex';
-import { sortRegions, type MathRegion, type PlotRegion, type Region, type TableRegion, type Worksheet } from './model';
+import { sortRegions, type DataFile, type MathRegion, type PlotRegion, type Region, type TableRegion, type Worksheet } from './model';
 import { checkResult, expectedToText, type CheckStatus } from './verify';
 import { symbolicEval } from './symbolic';
-import { cellValue, setDataFiles } from './datafiles';
+import { WRITE_NAMES, beginWrites, cellValue, endWrites, getWritten, setDataFiles, setWritten } from './datafiles';
 import { toText } from './serialize';
 
 export interface RegionError { message: string; culprit?: string; pos?: number; end?: number; kind: 'parse' | 'calc' }
@@ -47,6 +47,8 @@ export interface RegionResult {
   check?: { status: CheckStatus; expected: string };
   /** Symbolic result from Mathcad (LaTeX), shown for symbolic evaluations. */
   symbolicLatex?: string;
+  /** Files written by this region (WRITEPRN, WRITECSV, WRITEEXCEL). */
+  files?: DataFile[];
   /** Dimension vector of the shown value (SI exponents; for the unit picker). */
   dims?: number[];
   /** Value of a definition without "=" (shown on demand / as tooltip). */
@@ -65,6 +67,8 @@ export interface ComputeResult {
   variables: VariableInfo[];
   errorCount: number;
   millis: number;
+  /** Files written by WRITEPRN, WRITECSV, WRITEEXCEL. */
+  outputs?: DataFile[];
 }
 
 export interface ComputeOptions {
@@ -141,6 +145,7 @@ export class WorksheetEngine {
     this.ev = new Evaluator({ origin: ws.settings.origin ?? 0 });
     if (opts.maxStepsPerRegion) this.ev.maxSteps = opts.maxStepsPerRegion;
     this.fmt = { decimals: ws.settings.decimals ?? 3, expThreshold: ws.settings.expThreshold ?? 7, maxMatrix: 12, decimalComma: !!ws.settings.decimalComma };
+    setWritten(new Map());
   }
 
   latexCtx(scope: Scope, highlight?: string): LatexCtx {
@@ -170,6 +175,7 @@ export class WorksheetEngine {
       eigenVars: new Set(this.eigenVars),
       definedBy: new Map(this.definedBy),
       rng: [getRandomState(), getStatsSeed()],
+      written: getWritten(),
     };
   }
 
@@ -185,6 +191,7 @@ export class WorksheetEngine {
     this.definedBy = new Map(s.definedBy);
     resetRandom(s.rng[0]);
     setStatsSeed(s.rng[1]);
+    setWritten(s.written);
   }
 
   /** Pass 1: global definitions (≡) are evaluated before everything else. */
@@ -226,7 +233,10 @@ export class WorksheetEngine {
       return { id: r.id, kind: 'expr', latex: stmtLatex(p, this.latexCtx(this.top)), solve: 'constraint' };
     }
     if (r.disabled) return { id: r.id, kind: p.kind, latex: stmtLatex(p, this.latexCtx(this.top)) };
+    beginWrites();
     const res = this.runMath(r, p);
+    const wrote = endWrites();
+    if (wrote.length) res.files = wrote;
     if (r.guess && p.kind === 'define' && !p.target.params && !p.target.index && !p.target.multi) {
       this.pendingGuesses.push({ name: p.target.name, expr: p.expr });
       // a guess may depend on arguments of a solver function: not an error at this point
@@ -267,7 +277,10 @@ export class WorksheetEngine {
       mismatch: checks.filter(r => r.check!.status === 'mismatch').length,
       total: checks.length,
     } : undefined;
-    return { results, variables, errorCount, millis: Date.now() - t0, verification };
+    // files written by the worksheet: the last version of every name
+    const outputs = new Map<string, DataFile>();
+    for (const r of Object.values(results)) for (const f of r.files ?? []) outputs.set(f.name.toLowerCase(), f);
+    return { results, variables, errorCount, millis: Date.now() - t0, verification, ...(outputs.size ? { outputs: [...outputs.values()] } : {}) };
   }
 
   compute(): ComputeResult {
@@ -313,7 +326,10 @@ export class WorksheetEngine {
     try {
       switch (p.kind) {
         case 'empty': break;
-        case 'expr': break;
+        case 'expr':
+          // WRITEPRN("datei", M) as a statement: written, nothing shown
+          if (p.expr.k === 'call' && WRITE_NAMES.has(p.expr.name) && scope.get(p.expr.name) === undefined) this.evalWithRanges(p.expr, scope);
+          break;
         case 'eval': {
           if (p.sym) {
             let node: Node;
@@ -700,6 +716,8 @@ export interface EngineSnapshot {
   eigenVars: Set<string>;
   definedBy: Map<string, string>;
   rng: [number, number];
+  /** Files written so far (WRITEPRN …). */
+  written: Map<string, DataFile>;
 }
 
 export interface Progress { done: number; total: number; resumedAt: number }
