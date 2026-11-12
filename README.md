@@ -17,6 +17,15 @@ npm run preview    # gebaute Version ansehen
 
 Voraussetzung: Node.js ≥ 20. Die App läuft komplett im Browser, es werden keine Daten an einen Server geschickt.
 
+### Windows-Programm (.exe)
+
+FormelWerk gibt es auch als eigenständiges Windows-Programm (64 Bit) – ohne Browser, ohne Internet:
+
+- **Fertig herunterladen**: auf GitHub unter *Releases* → *FormelWerk für Windows*. `FormelWerk-…-portable.exe` läuft ohne Installation, `FormelWerk-…-Setup.exe` installiert das Programm mit Startmenü-Eintrag; danach öffnen sich `.fwk`-, `.mcdx`- und `.xmcd`-Dateien per Doppelklick. Die Dateien sind nicht signiert – beim ersten Start meldet Windows „Der Computer wurde durch Windows geschützt“; über *Weitere Informationen* → *Trotzdem ausführen* geht es weiter.
+- **Selbst bauen**: `npm run exe` erzeugt unter Windows beide Dateien im Ordner `release/`; `npm run exe:portable` nur die portable EXE (das geht auch unter Linux, der Installer braucht dort zusätzlich Wine mit 32-Bit-Unterstützung). `npm run desktop` startet die Desktop-Fassung direkt.
+
+Das Programm ist die gleiche App in einem eigenen Fenster (Electron, `electron/main.cjs`); die App-Dateien liegen im Programmordner, es wird nichts aus dem Internet geladen. Bei jedem Stand auf `main` baut GitHub Actions (`.github/workflows/windows-exe.yml`) das Programm auf einem Windows-Rechner, startet es als Selbsttest (Beispielblatt rechnen, eine Mathcad-Datei öffnen) und veröffentlicht es.
+
 ## Bedienung
 
 | Aktion | So geht's |
@@ -158,6 +167,7 @@ src/engine/   Rechenkern (unabhängig von der Oberfläche)
   verify.ts      Vergleich mit gespeicherten Mathcad-Ergebnissen
 src/import/   Mathcad-Import (math30/math50-XML → Syntaxbaum → Text)
 src/export/   Word-Export (LaTeX → Office-Math/OMML, DOCX) und Mathcad-Prime-Export (Syntaxbaum → math50-XML, MCDX)
+electron/     Desktop-Fassung (Windows-Programm): Fenster, Öffnen von Dateien per Doppelklick, Selbsttest
 src/ui/       React-Oberfläche; Berechnung läuft in einem Web Worker
   actions.ts     zentrale Befehle (Menüband, Kontextmenü, Befehlspalette, Tastenkürzel)
   print.ts       Drucklayout (Seitenumbrüche, Fußzeilen, Skalierung)

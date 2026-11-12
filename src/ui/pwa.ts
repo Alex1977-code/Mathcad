@@ -27,6 +27,8 @@ export function registerOffline(onMessage: (text: string) => void) {
   window.addEventListener('offline', () => { pwa.online = false; emit(); });
   window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installEvent = e as InstallPrompt; pwa.canInstall = true; emit(); });
   window.addEventListener('appinstalled', () => { installEvent = null; pwa.canInstall = false; emit(); });
+  // the desktop program has all files on disk: no service worker needed
+  if ('formelwerkDesktop' in window) return;
   if (!('serviceWorker' in navigator) || !import.meta.env.PROD) return;
   const hadController = !!navigator.serviceWorker.controller;
   navigator.serviceWorker.register('./sw.js').then((reg) => {

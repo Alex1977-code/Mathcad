@@ -4,3 +4,4 @@ dist
 e2e/out
 node_modules
 test-results
+release

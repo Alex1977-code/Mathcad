@@ -11,7 +11,10 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "verify:mathcad": "vitest run tests/import.verify.test.ts",
-    "e2e": "node e2e/run.mjs"
+    "e2e": "node e2e/run.mjs",
+    "desktop": "npm run build && electron .",
+    "exe": "npm run build && electron-builder --win --x64 --publish never",
+    "exe:portable": "npm run build && electron-builder --win portable --x64 --publish never"
   },
   "dependencies": {
     "jszip": "^3.10.2",
@@ -26,9 +29,78 @@
     "@types/react": "^18.3.31",
     "@types/react-dom": "^18.3.7",
     "@vitejs/plugin-react": "^6.3.0",
+    "electron": "^45.3.1",
+    "electron-builder": "^26.18.0",
     "jsdom": "^31.0.0",
     "typescript": "5.9",
     "vite": "^8.3.6",
     "vitest": "^5.1.0"
+  },
+  "main": "electron/main.cjs",
+  "author": "FormelWerk",
+  "build": {
+    "appId": "de.formelwerk.app",
+    "productName": "FormelWerk",
+    "copyright": "FormelWerk",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json",
+      "!**/node_modules/**/*"
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "public/icon-512.png"
+    },
+    "portable": {
+      "artifactName": "FormelWerk-${version}-portable.exe"
+    },
+    "nsis": {
+      "artifactName": "FormelWerk-${version}-Setup.exe",
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "FormelWerk",
+      "language": "1031"
+    },
+    "fileAssociations": [
+      {
+        "ext": "fwk",
+        "name": "FormelWerk-Arbeitsblatt",
+        "description": "FormelWerk-Arbeitsblatt",
+        "role": "Editor"
+      },
+      {
+        "ext": "mcdx",
+        "name": "Mathcad-Prime-Arbeitsblatt",
+        "description": "Mathcad-Prime-Arbeitsblatt",
+        "role": "Viewer"
+      },
+      {
+        "ext": "xmcd",
+        "name": "Mathcad-Arbeitsblatt",
+        "description": "Mathcad-Arbeitsblatt (XML)",
+        "role": "Viewer"
+      }
+    ]
   }
 }

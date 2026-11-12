@@ -1,0 +1,73 @@
+# Builds FormelWerk as a Windows program (portable .exe and installer), starts it once as a self test
+# and publishes both files as the release "FormelWerk für Windows".
+name: Windows-EXE
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-exe
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Abhängigkeiten installieren
+        run: npm ci
+      - name: App bauen
+        run: npm run build
+      - name: Windows-Programm bauen
+        run: npx electron-builder --win --x64 --publish never
+      - name: Selbsttest (Programm starten und Beispielblatt rechnen)
+        shell: pwsh
+        run: |
+          $env:FORMELWERK_SMOKE_OUT = "$PWD\smoke.txt"
+          $p = Start-Process -FilePath "release\win-unpacked\FormelWerk.exe" -ArgumentList "--smoke-test" -Wait -PassThru
+          if (Test-Path smoke.txt) { Get-Content smoke.txt }
+          if ($p.ExitCode -ne 0) { Write-Error "Selbsttest fehlgeschlagen (Exit-Code $($p.ExitCode))"; exit 1 }
+          if (-not (Select-String -Path smoke.txt -Pattern '^OK ' -Quiet)) { Write-Error "Selbsttest ohne Ergebnis"; exit 1 }
+      - name: Selbsttest der portablen EXE mit einer Mathcad-Datei
+        shell: pwsh
+        run: |
+          $env:FORMELWERK_SMOKE_OUT = "$PWD\smoke-portable.txt"
+          $exe = (Get-ChildItem release\*portable.exe | Select-Object -First 1).FullName
+          Start-Process -FilePath $exe -ArgumentList "--smoke-test", "$PWD\tests\fixtures\mathcad\prime\trig.mcdx"
+          $deadline = (Get-Date).AddSeconds(150)
+          while (-not (Test-Path smoke-portable.txt) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 2 }
+          if (-not (Test-Path smoke-portable.txt)) { Write-Error "Portable EXE hat sich nicht gemeldet"; exit 1 }
+          Get-Content smoke-portable.txt
+          if (-not (Select-String -Path smoke-portable.txt -Pattern '^OK .*title=trig' -Quiet)) { Write-Error "Portable EXE: Mathcad-Datei nicht geöffnet"; exit 1 }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FormelWerk-Windows
+          path: release/*.exe
+          if-no-files-found: error
+      - name: Veröffentlichen
+        if: github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          gh release delete windows --cleanup-tag --yes || true
+          gh release create windows release/*.exe \
+            --target "$GITHUB_SHA" \
+            --title "FormelWerk für Windows ($VERSION)" \
+            --notes "Aktueller Stand von FormelWerk als Windows-Programm (64 Bit).
+
+          - **FormelWerk-$VERSION-portable.exe** – ohne Installation: herunterladen und starten.
+          - **FormelWerk-$VERSION-Setup.exe** – Installation mit Startmenü-Eintrag und Verknüpfung; .fwk-, .mcdx- und .xmcd-Dateien lassen sich danach per Doppelklick öffnen.
+
+          Die Dateien sind nicht signiert. Windows zeigt beim ersten Start deshalb den Hinweis „Der Computer wurde durch Windows geschützt“ – über „Weitere Informationen“ → „Trotzdem ausführen“ startet das Programm."

@@ -37,6 +37,10 @@ function useTheme(): [Theme, () => void] {
 
 interface Toast { text: string; err?: boolean; id: number }
 
+interface DesktopFile { name: string; data: Uint8Array }
+/** Provided by the desktop program (electron/preload.cjs); absent in the browser. */
+interface DesktopBridge { takeOpenFile(): Promise<DesktopFile | null>; onOpenFile(cb: (doc: DesktopFile) => void): void }
+
 export function App() {
   const ws = useStore(s => s.ws);
   const dirty = useStore(s => s.dirty);
@@ -119,6 +123,16 @@ export function App() {
       notify((e as Error).message, true);
     }
   };
+  // desktop program: worksheet the program was started with (double click on a file), and files opened later
+  useEffect(() => {
+    const desktop = (window as unknown as { formelwerkDesktop?: DesktopBridge }).formelwerkDesktop;
+    if (!desktop) return;
+    const open = (doc: DesktopFile | null) => { if (doc) void openFile(new File([doc.data as BlobPart], doc.name)); };
+    void desktop.takeOpenFile().then(open).catch(() => undefined);
+    desktop.onOpenFile(open);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const makeMcdx = async () => {
     const { buildMcdx } = await import('../export/mcdx');
     const r = await withLightTheme(() => buildMcdx(store.get().ws, { result: latestResult.current, fileName: store.get().fileName, plotPng }));
