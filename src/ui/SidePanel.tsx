@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { PlotRegion, PlotTrace } from '../engine/model';
+import { PLOT_KINDS, type PlotKind, type PlotRegion, type PlotTrace } from '../engine/model';
 import type { ComputeResult } from '../engine/worksheet';
 import { nameLatex } from '../engine/latex';
 import { renderLatex } from './katex';
@@ -138,11 +138,44 @@ function DataFiles({ outputs }: { outputs?: DataFile[] }) {
   );
 }
 
+const KIND_LABEL: Record<PlotKind, string> = { xy: 'X-Y-Diagramm', polar: 'Polardiagramm', surface: '3D-Fläche', contour: 'Höhenlinien' };
+
+/** Change of the plot type: limits and variables that still hold the defaults of the old type follow. */
+export function plotKindPatch(region: PlotRegion, kind: PlotKind): Partial<PlotRegion> {
+  const from = region.kind ?? 'xy';
+  const patch: Partial<PlotRegion> = { kind: kind === 'xy' ? undefined : kind };
+  const is = (lo: string, hi: string) => (region.xmin ?? '') === lo && (region.xmax ?? '') === hi;
+  const xyDefault = is('-10', '10') || is('', ''), polarDefault = is('0', '2*π'), d3Default = is('-5', '5');
+  const untouched = from === 'polar' ? polarDefault : from === 'xy' ? xyDefault : d3Default;
+  if (untouched) {
+    if (kind === 'polar') Object.assign(patch, { xmin: '0', xmax: '2*π', ymin: '', ymax: '' });
+    else if (kind === 'xy') Object.assign(patch, { xmin: '-10', xmax: '10', ymin: '', ymax: '' });
+    else if (from === 'xy' || from === 'polar') Object.assign(patch, { xmin: '-5', xmax: '5', ymin: '-5', ymax: '5' });
+  }
+  // the default variable follows the type as long as no expression uses it
+  const first = region.traces[0];
+  if (first && !first.y.trim() && region.traces.length === 1) {
+    const def = from === 'polar' ? 'φ' : 'x';
+    const next = kind === 'polar' ? 'φ' : 'x';
+    if ((first.x || def) === def && first.x !== next) patch.traces = [{ ...first, x: next }];
+  }
+  return patch;
+}
+
 function PlotEditor({ region, result }: { region: PlotRegion; result: ComputeResult | null }) {
   // no undo step per keystroke: the store records one step for the whole plot editing session
   const upd = (patch: Partial<PlotRegion>) => store.updateRegion(region.id, patch, false);
   const setTrace = (i: number, patch: Partial<PlotTrace>) => upd({ traces: region.traces.map((t, k) => (k === i ? { ...t, ...patch } : t)) });
   const err = result?.results[region.id]?.plot?.error;
+  const kind = region.kind ?? 'xy';
+  const polar = kind === 'polar', d3 = kind === 'surface' || kind === 'contour';
+  const first = region.traces[0] ?? { x: 'x', y: '' };
+  const numField = (label: string, key: 'grid' | 'az' | 'el', def: number, min: number, max: number) => (
+    <div className="field"><label>{label}</label>
+      <input type="number" min={min} max={max} value={region[key] ?? def}
+        onChange={(e) => { const v = Number(e.target.value); if (Number.isFinite(v)) upd({ [key]: Math.max(min, Math.min(max, v)) }); }} />
+    </div>
+  );
   return (
     <div className="side-body">
       <div className="panel-title">
@@ -151,46 +184,94 @@ function PlotEditor({ region, result }: { region: PlotRegion; result: ComputeRes
         <button className="btn icon ghost" title="Schließen" onClick={() => store.set({ plotEditor: null })}><IconClose /></button>
       </div>
       <div className="field">
+        <label>Art</label>
+        <select aria-label="Diagrammart" value={kind} onChange={(e) => upd(plotKindPatch(region, e.target.value as PlotKind))}>
+          {PLOT_KINDS.map(k => <option key={k} value={k}>{KIND_LABEL[k]}</option>)}
+        </select>
+      </div>
+      <div className="field">
         <label>Titel</label>
         <input value={region.title ?? ''} placeholder="optional" onChange={(e) => upd({ title: e.target.value })} />
       </div>
-      {region.traces.map((t, i) => (
-        <div key={i} className="trace-card">
-          <div className="trace-head">
-            <input type="color" value={t.color ?? PLOT_COLORS[i % PLOT_COLORS.length]} onChange={(e) => setTrace(i, { color: e.target.value })} title="Farbe" />
-            Kurve {i + 1}
-            <span className="spacer" />
-            <select value={t.style ?? 'line'} onChange={(e) => setTrace(i, { style: e.target.value as PlotTrace['style'] })}>
-              <option value="line">Linie</option><option value="points">Punkte</option><option value="both">Linie + Punkte</option>
-            </select>
-            {region.traces.length > 1 && <button className="btn icon ghost" title="Kurve entfernen" onClick={() => upd({ traces: region.traces.filter((_, k) => k !== i) })}><IconTrash /></button>}
-          </div>
+      {d3 ? (
+        <div className="trace-card">
+          <div className="field"><label>z-Ausdruck</label><input value={first.y} placeholder="z. B. sin(x)*cos(y)" spellCheck={false} aria-label="z-Ausdruck" onChange={(e) => setTrace(0, { y: e.target.value })} /></div>
           <div className="field row">
-            <div className="field"><label>x-Ausdruck</label><input value={t.x} placeholder="x" spellCheck={false} onChange={(e) => setTrace(i, { x: e.target.value })} /></div>
-            <div className="field"><label>y-Ausdruck</label><input value={t.y} placeholder="z. B. sin(x)" spellCheck={false} onChange={(e) => setTrace(i, { y: e.target.value })} /></div>
+            <div className="field"><label>1. Variable</label><input value={first.x} placeholder="x" spellCheck={false} onChange={(e) => setTrace(0, { x: e.target.value })} /></div>
+            <div className="field"><label>2. Variable</label><input value={region.yVar ?? ''} placeholder="y" spellCheck={false} onChange={(e) => upd({ yVar: e.target.value })} /></div>
           </div>
         </div>
-      ))}
-      <button className="btn" onClick={() => upd({ traces: [...region.traces, { x: region.traces[0]?.x ?? 'x', y: '' }] })}><IconPlus />Kurve hinzufügen</button>
-      <div className="panel-title" style={{ marginTop: 16 }}>Achsen</div>
+      ) : (
+        <>
+          {region.traces.map((t, i) => (
+            <div key={i} className="trace-card">
+              <div className="trace-head">
+                <input type="color" value={t.color ?? PLOT_COLORS[i % PLOT_COLORS.length]} onChange={(e) => setTrace(i, { color: e.target.value })} title="Farbe" />
+                Kurve {i + 1}
+                <span className="spacer" />
+                <select value={t.style ?? 'line'} onChange={(e) => setTrace(i, { style: e.target.value as PlotTrace['style'] })}>
+                  <option value="line">Linie</option><option value="points">Punkte</option><option value="both">Linie + Punkte</option>
+                </select>
+                {region.traces.length > 1 && <button className="btn icon ghost" title="Kurve entfernen" onClick={() => upd({ traces: region.traces.filter((_, k) => k !== i) })}><IconTrash /></button>}
+              </div>
+              <div className="field row">
+                <div className="field"><label>{polar ? 'Winkel' : 'x-Ausdruck'}</label><input value={t.x} placeholder={polar ? 'φ' : 'x'} spellCheck={false} onChange={(e) => setTrace(i, { x: e.target.value })} /></div>
+                <div className="field"><label>{polar ? 'Radius r' : 'y-Ausdruck'}</label><input value={t.y} placeholder={polar ? 'z. B. 1 + cos(φ)' : 'z. B. sin(x)'} spellCheck={false} aria-label={polar ? 'Radius' : 'y-Ausdruck'} onChange={(e) => setTrace(i, { y: e.target.value })} /></div>
+              </div>
+            </div>
+          ))}
+          <button className="btn" onClick={() => upd({ traces: [...region.traces, { x: region.traces[0]?.x ?? (polar ? 'φ' : 'x'), y: '' }] })}><IconPlus />Kurve hinzufügen</button>
+        </>
+      )}
+      <div className="panel-title" style={{ marginTop: 16 }}>{polar ? 'Bereich' : 'Achsen'}</div>
       <div className="field row">
-        <div className="field"><label>x von</label><input value={region.xmin ?? ''} placeholder="auto" onChange={(e) => upd({ xmin: e.target.value })} /></div>
-        <div className="field"><label>x bis</label><input value={region.xmax ?? ''} placeholder="auto" onChange={(e) => upd({ xmax: e.target.value })} /></div>
+        <div className="field"><label>{polar ? 'Winkel von' : 'x von'}</label><input value={region.xmin ?? ''} placeholder={polar ? '0' : d3 ? '-5' : 'auto'} onChange={(e) => upd({ xmin: e.target.value })} /></div>
+        <div className="field"><label>{polar ? 'Winkel bis' : 'x bis'}</label><input value={region.xmax ?? ''} placeholder={polar ? '2*π' : d3 ? '5' : 'auto'} onChange={(e) => upd({ xmax: e.target.value })} /></div>
       </div>
       <div className="field row">
-        <div className="field"><label>y von</label><input value={region.ymin ?? ''} placeholder="auto" onChange={(e) => upd({ ymin: e.target.value })} /></div>
-        <div className="field"><label>y bis</label><input value={region.ymax ?? ''} placeholder="auto" onChange={(e) => upd({ ymax: e.target.value })} /></div>
+        <div className="field"><label>{polar ? 'r von' : 'y von'}</label><input value={region.ymin ?? ''} placeholder={polar ? '0' : d3 ? '-5' : 'auto'} onChange={(e) => upd({ ymin: e.target.value })} /></div>
+        <div className="field"><label>{polar ? 'r bis' : 'y bis'}</label><input value={region.ymax ?? ''} placeholder={d3 ? '5' : 'auto'} onChange={(e) => upd({ ymax: e.target.value })} /></div>
       </div>
-      <div className="field row">
-        <div className="field"><label>Einheit x</label><input value={region.xUnit ?? ''} placeholder="z. B. m" onChange={(e) => upd({ xUnit: e.target.value })} /></div>
-        <div className="field"><label>Einheit y</label><input value={region.yUnit ?? ''} placeholder="z. B. kN*m" onChange={(e) => upd({ yUnit: e.target.value })} /></div>
-      </div>
-      <label className="check"><input type="checkbox" checked={!!region.logX} onChange={(e) => upd({ logX: e.target.checked })} />x logarithmisch</label>
-      <label className="check"><input type="checkbox" checked={!!region.logY} onChange={(e) => upd({ logY: e.target.checked })} />y logarithmisch</label>
+      {d3 && (
+        <div className="field row">
+          <div className="field"><label>z von</label><input value={region.zmin ?? ''} placeholder="auto" onChange={(e) => upd({ zmin: e.target.value })} /></div>
+          <div className="field"><label>z bis</label><input value={region.zmax ?? ''} placeholder="auto" onChange={(e) => upd({ zmax: e.target.value })} /></div>
+        </div>
+      )}
+      {!polar && (
+        <div className="field row">
+          <div className="field"><label>Einheit x</label><input value={region.xUnit ?? ''} placeholder="z. B. m" onChange={(e) => upd({ xUnit: e.target.value })} /></div>
+          <div className="field"><label>Einheit y</label><input value={region.yUnit ?? ''} placeholder={d3 ? 'z. B. m' : 'z. B. kN*m'} onChange={(e) => upd({ yUnit: e.target.value })} /></div>
+        </div>
+      )}
+      {polar && <div className="field"><label>Einheit r</label><input value={region.yUnit ?? ''} placeholder="z. B. m" onChange={(e) => upd({ yUnit: e.target.value })} /></div>}
+      {d3 && (
+        <div className="field row">
+          <div className="field"><label>Einheit z</label><input value={region.zUnit ?? ''} placeholder="z. B. kN" onChange={(e) => upd({ zUnit: e.target.value })} /></div>
+          {numField('Auflösung', 'grid', kind === 'contour' ? 60 : 30, 4, 120)}
+        </div>
+      )}
+      {kind === 'surface' && (
+        <div className="field row">
+          {numField('Drehung (°)', 'az', 35, 0, 360)}
+          {numField('Neigung (°)', 'el', 28, -89, 89)}
+        </div>
+      )}
+      {kind === 'xy' && (
+        <>
+          <label className="check"><input type="checkbox" checked={!!region.logX} onChange={(e) => upd({ logX: e.target.checked })} />x logarithmisch</label>
+          <label className="check"><input type="checkbox" checked={!!region.logY} onChange={(e) => upd({ logY: e.target.checked })} />y logarithmisch</label>
+        </>
+      )}
       {err && <div className="plot-error" style={{ marginTop: 10 }}>⚠ {err}</div>}
       <p className="empty-hint">
-        Ist die x-Variable nicht definiert, wird sie automatisch zwischen „x von“ und „x bis“ abgetastet (Schnelldiagramm).
-        Bereichsvariablen (<code>i := 0..10</code>) und Vektoren werden direkt gezeichnet.
+        {kind === 'xy' && <>Ist die x-Variable nicht definiert, wird sie automatisch zwischen „x von“ und „x bis“ abgetastet (Schnelldiagramm).
+          Bereichsvariablen (<code>i := 0..10</code>) und Vektoren werden direkt gezeichnet.</>}
+        {polar && <>Der Radius wird über dem Winkel (im Bogenmaß) gezeichnet, ohne Angabe über eine volle Umdrehung. Ein negativer Radius zeigt in die Gegenrichtung.
+          Bereichsvariablen und Vektoren für Winkel und Radius werden direkt gezeichnet.</>}
+        {kind === 'surface' && <>z wird über den beiden Variablen berechnet. Statt eines Ausdrucks geht auch der Name einer Funktion <code>f(x, y)</code> oder eine Matrix.
+          Diagramm anklicken und dann mit der Maus ziehen dreht die Ansicht.</>}
+        {kind === 'contour' && <>z wird über den beiden Variablen berechnet und als Farbe mit Höhenlinien gezeichnet. Statt eines Ausdrucks geht auch der Name einer Funktion <code>f(x, y)</code> oder eine Matrix.</>}
       </p>
     </div>
   );

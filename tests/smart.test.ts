@@ -34,7 +34,8 @@ describe('Bedienung: Formel-Umschreibungen', () => {
 
   it('erkennt Funktionen zum Plotten und Gleichungen zum Lösen', () => {
     expect(plottableFunction('f(x) := x^2 - 2')).toEqual({ name: 'f', param: 'x' });
-    expect(plottableFunction('g(a, b) := a + b')).toBeNull();
+    expect(plottableFunction('g(a, b) := a + b')).toEqual({ name: 'g', param: 'a', param2: 'b' });
+    expect(plottableFunction('g(a, b, c) := a + b')).toBeNull();
     expect(plottableFunction('x := 3')).toBeNull();
     expect(equationSides('x^2 - 2 == 7')).toEqual({ lhs: 'x^2 - 2', rhs: '7' });
     expect(equationSides('3*x + 1 = 10')).toEqual({ lhs: '3*x + 1', rhs: '10' });

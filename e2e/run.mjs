@@ -446,13 +446,72 @@ try {
     await shot('17-regler.png');
   }
 
+  /* 15b · polar, surface and contour plots */
+  {
+    await page.click('text=Datei'); await page.click('.menu >> text=Neu');
+    await page.waitForSelector('.welcome');
+    const pg = await page.locator('.page').boundingBox();
+    await page.mouse.click(pg.x + 60, pg.y + 40);
+    await page.keyboard.type('f(x,y):=sin(x)*cos(y)'); await page.keyboard.press('Enter');
+    await page.keyboard.press('Escape');
+    await idle();
+    // one right click on the function: surface plot below it
+    await page.locator('.region.math-region').first().click({ button: 'right' });
+    await page.click('.ctxmenu >> text=3D-Fläche von f(x, y) einfügen');
+    await page.waitForSelector('svg.plot-svg.surface .mesh polygon');
+    await idle();
+    const nQuads = await page.locator('svg.plot-svg.surface .mesh polygon').count();
+    ok(nQuads === 900, `3D-Fläche aus dem Kontextmenü einer Funktion f(x, y): ${nQuads} Flächenstücke`);
+    // dragging inside the selected plot rotates the view
+    const sb = await page.locator('svg.plot-svg.surface').boundingBox();
+    const first = await page.locator('svg.plot-svg.surface .mesh polygon').first().getAttribute('points');
+    await page.mouse.click(sb.x + sb.width / 2, sb.y + sb.height / 2);
+    await page.mouse.move(sb.x + sb.width / 2, sb.y + sb.height / 2); await page.mouse.down();
+    await page.mouse.move(sb.x + sb.width / 2 + 90, sb.y + sb.height / 2 - 30, { steps: 6 }); await page.mouse.up();
+    await page.waitForTimeout(900); await idle();
+    const rotated = await page.locator('svg.plot-svg.surface .mesh polygon').first().getAttribute('points');
+    const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('formelwerk.autosave.v1')).regions.find((r) => r.type === 'plot'));
+    ok(first !== rotated && saved.az === 350 && saved.el === 13 && Math.abs(saved.x - 48) < 30, `3D-Fläche: Ziehen dreht die Ansicht (Drehung ${saved.az}°, Neigung ${saved.el}°), der Bereich bleibt an seinem Platz`);
+    await page.mouse.move(sb.x + sb.width * 0.45, sb.y + sb.height * 0.5);
+    await page.waitForSelector('.plot-tooltip');
+    ok(/x = .*y = .*z = /.test(await page.locator('.plot-tooltip').innerText()), '3D-Fläche: Wert unter der Maus wird angezeigt');
+    // polar plot from the ribbon
+    await page.mouse.click(pg.x + 520, pg.y + 60);
+    await page.click('button[title^="Polardiagramm einfügen"]');
+    await page.waitForSelector('.side select[aria-label="Diagrammart"]');
+    await page.locator('.side input[aria-label="Radius"]').fill('1 + cos(φ)');
+    await page.waitForSelector('svg.plot-svg.polar path');
+    await idle();
+    const pd = await page.locator('svg.plot-svg.polar path').first().getAttribute('d');
+    ok((pd ?? '').length > 2000 && (await page.locator('svg.plot-svg.polar .grid circle').count()) >= 3, 'Polardiagramm aus dem Menüband: Kurve über eine volle Umdrehung, Kreisgitter');
+    // the type of a plot can be changed in the editor: contour plot
+    await page.locator('.side input[aria-label="Radius"]').fill('');
+    await page.locator('.side select[aria-label="Diagrammart"]').selectOption('contour');
+    await page.locator('.side input[aria-label="z-Ausdruck"]').fill('x^2 - y^2');
+    await page.waitForSelector('svg.plot-svg.contour .cells rect');
+    await idle();
+    const nCells = await page.locator('svg.plot-svg.contour .cells rect').count();
+    const nIso = await page.locator('svg.plot-svg.contour .iso path').count();
+    ok(nCells === 3600 && nIso >= 5, `Höhenlinien nach Wechsel der Diagrammart: ${nCells} Felder, ${nIso} Höhenlinien`);
+    await page.click('.side button[title="Schließen"]');
+    await page.mouse.click(pg.x + 300, pg.y + 20);
+    await shot('18-polar-3d.png');
+    // Word export: both plots arrive as pictures
+    const dl = page.waitForEvent('download');
+    await page.keyboard.press('Control+k'); await page.waitForSelector('.palette input'); await page.locator('.palette input').fill('Word-Dokument'); await page.locator('.palette input').press('Enter');
+    const dZip = await require('jszip').loadAsync(readFileSync(await (await dl).path()));
+    const media = Object.keys(dZip.files).filter((n) => /^word\/media\/.*\.png$/.test(n));
+    const sizes = await Promise.all(media.map(async (n) => (await dZip.file(n).async('uint8array')).length));
+    ok(media.length === 2 && sizes.every((n) => n > 8000), `Word-Export: 3D-Fläche und Höhenlinien als Bilder (${sizes.join(', ')} Bytes)`);
+  }
+
   /* 16 · offline: everything is cached by the service worker */
   {
     await page.evaluate(() => navigator.serviceWorker.ready);
     await page.waitForFunction(() => !!navigator.serviceWorker.controller, null, { timeout: 20000 });
     await page.context().setOffline(true);
     await page.reload();
-    await page.waitForSelector('.slider-region', { timeout: 20000 });
+    await page.waitForSelector('svg.plot-svg.surface', { timeout: 20000 });
     const pg = await page.locator('.page').boundingBox();
     await page.mouse.click(pg.x + 400, pg.y + 60);
     await page.keyboard.type('3 kN*2 m= kN*m'); await page.keyboard.press('Enter');

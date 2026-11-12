@@ -2,14 +2,14 @@
  * Central command registry: used by the ribbon, the context menu, the command palette and the
  * keyboard shortcuts, so every function is reachable in the same way everywhere.
  */
-import { newId, sortRegions, type DataFile, type MathRegion, type Region, type SliderRegion } from '../engine/model';
+import { newId, sortRegions, type DataFile, type MathRegion, type PlotKind, type Region, type SliderRegion } from '../engine/model';
 import { store, writePref } from './store';
 import { getActiveEditor } from './editing';
 import { MARGIN, regionElements, separateRegions, snap } from './layout';
 import { downloadBlob, pickFile } from './files';
 import { parseDelimited } from '../engine/datafiles';
 import { pwa } from './pwa';
-import { quickPlotAtCursor } from './smart';
+import { emptyPlot, quickPlotAtCursor } from './smart';
 import { cursorOrDefault, imageRegionFromFile, insertForeign, regionsFromText, regionsHtml, regionsPlainText } from './clipboard';
 
 export function newMathRegion(x: number, y: number, src = ''): Region {
@@ -31,15 +31,15 @@ export function insertSnippet(snippet: string) {
   store.set({ editOriginal: '' });
 }
 
-export function insertRegion(kind: 'math' | 'text' | 'plot' | 'pagebreak', at?: { x: number; y: number }) {
+export function insertRegion(kind: 'math' | 'text' | 'plot' | 'pagebreak', at?: { x: number; y: number }, plotKind: PlotKind = 'xy') {
   const s = store.get();
   const cur = at ?? s.cursor ?? { x: MARGIN, y: MARGIN };
   if (kind === 'math') store.addRegion(newMathRegion(cur.x, cur.y), true);
   else if (kind === 'text') store.addRegion({ id: newId(), type: 'text', x: cur.x, y: cur.y, w: 380, html: '' }, true);
   else if (kind === 'plot') {
-    const r: Region = { id: newId(), type: 'plot', x: cur.x, y: cur.y, w: 440, h: 270, traces: [{ x: 'x', y: '' }], xmin: '-10', xmax: '10' };
+    const r = emptyPlot(plotKind, cur.x, cur.y);
     store.addRegion(r);
-    store.set({ plotEditor: r.id, cursor: { x: cur.x, y: snap(cur.y + 290) } });
+    store.set({ plotEditor: r.id, cursor: { x: cur.x, y: snap(cur.y + (r.h ?? 270) + 20) } });
   } else {
     store.addRegion({ id: newId(), type: 'pagebreak', x: 0, y: cur.y });
     store.set({ cursor: { x: cur.x, y: cur.y + 30 } });
@@ -369,6 +369,9 @@ export function commands(): Command[] {
     { id: 'math', group: 'Einfügen', label: 'Formel', keys: 'Tippen', run: () => insertRegion('math') },
     { id: 'text', group: 'Einfügen', label: 'Textbereich', keys: '"', run: () => insertRegion('text'), tags: 'notiz beschreibung' },
     { id: 'plot', group: 'Einfügen', label: 'X-Y-Diagramm', keys: '@', run: () => quickPlotAtCursor(), tags: 'diagramm plot graph kurve' },
+    { id: 'plot-polar', group: 'Einfügen', label: 'Polardiagramm', run: () => quickPlotAtCursor('polar'), tags: 'diagramm plot polar winkel radius kreis' },
+    { id: 'plot-surface', group: 'Einfügen', label: '3D-Diagramm (Fläche)', run: () => quickPlotAtCursor('surface'), tags: 'diagramm plot 3d fläche oberfläche surface räumlich' },
+    { id: 'plot-contour', group: 'Einfügen', label: 'Höhenlinien-Diagramm', run: () => quickPlotAtCursor('contour'), tags: 'diagramm plot kontur contour höhenlinien isolinien 3d' },
     { id: 'table', group: 'Einfügen', label: 'Datentabelle', run: () => insertTable(), tags: 'tabelle daten messwerte excel' },
     { id: 'slider', group: 'Einfügen', label: 'Schieberegler', run: () => insertSlider(), tags: 'regler slider steuerelement variable ziehen' },
     { id: 'datafile', group: 'Einfügen', label: 'Datei einlesen (CSV, Excel) …', run: () => { void insertDataFile(); }, tags: 'csv excel xlsx xls prn import daten readexcel readcsv' },

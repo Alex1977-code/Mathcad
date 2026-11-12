@@ -148,6 +148,12 @@ export async function regionsToPng(ids: string[], scale = 2): Promise<{ data: Ui
   });
 }
 
+/** Picture of a plot as it is drawn on the page. */
+export const plotPng = async (r: PlotRegion) => {
+  const svg = regionElements.get(r.id)?.querySelector('svg.plot-svg') as SVGSVGElement | null;
+  return svg ? svgToPng(svg, 2) : null;
+};
+
 /** Word document of the worksheet. */
 export async function makeDocx(ws: Worksheet, result: ComputeResult | null): Promise<Blob> {
   const { buildDocx } = await import('../export/docx');
@@ -161,9 +167,6 @@ export async function makeDocx(ws: Worksheet, result: ComputeResult | null): Pro
       const stale = !res?.latex || (res.src !== undefined && res.src !== r.src);
       return composeLatex(r.src, stale ? { id: r.id } : res).latex;
     },
-    plotPng: async (r: PlotRegion) => {
-      const svg = regionElements.get(r.id)?.querySelector('svg.plot-svg') as SVGSVGElement | null;
-      return svg ? svgToPng(svg, 2) : null;
-    },
+    plotPng,
   }));
 }

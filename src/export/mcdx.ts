@@ -336,7 +336,13 @@ const findCall = (st: MathStmt | null): string[] | null => {
   return names;
 };
 
-export interface McdxOptions { /** Calculated results (symbolic results are stored with the formulas). */ result?: ComputeResult | null; fileName?: string | null }
+export interface McdxOptions {
+  /** Calculated results (symbolic results are stored with the formulas). */
+  result?: ComputeResult | null;
+  fileName?: string | null;
+  /** PNG of a plot region (browser only): polar and 3D plots are exported as pictures. */
+  plotPng?: (r: Region & { type: 'plot' }) => Promise<{ data: Uint8Array; w: number; h: number } | null>;
+}
 
 export async function buildMcdx(ws: Worksheet, opts: McdxOptions = {}): Promise<McdxResult> {
   const warnings: string[] = [];
@@ -453,6 +459,24 @@ export async function buildMcdx(ws: Worksheet, opts: McdxOptions = {}): Promise<
         break;
       }
       case 'plot': {
+        const pk = r.kind ?? 'xy';
+        if (pk !== 'xy') {
+          // polar and 3D plots: Prime's own formats are not known here – the drawn picture is carried over
+          const what = pk === 'polar' ? 'Polardiagramm' : pk === 'surface' ? '3D-Diagramm' : 'Höhenlinien-Diagramm';
+          const png = await opts.plotPng?.(r).catch(() => null);
+          if (png) {
+            const id = rid(), name = `Image${++imgN}.png`;
+            parts.push({ path: `mathcad/media/${name}`, data: png.data });
+            rels.push(`<Relationship Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="/mathcad/media/${name}" Id="${id}" />`);
+            out.push(`<region ${geom({ ...r, w: png.w, h: png.h })}><picture><png item-idref="${id}" display-width="${png.w}" display-height="${png.h}" /></picture></region>`);
+            warnings.push(`${what} als Bild übernommen – in Mathcad bei Bedarf neu einfügen`);
+          } else {
+            const t = r.traces.map(q => q.y).filter(Boolean).join('; ');
+            warnings.push(`${what} als Hinweistext übernommen (${t || 'leer'}) – in Mathcad neu einfügen`);
+            out.push(await textRegion(r, `<i>[${what} aus FormelWerk: ${esc(t)}]</i>`));
+          }
+          break;
+        }
         const xml = plotXml(r, ctx, () => { const ref = resultId++; results.push(`<resultData result-id="${ref}" calculation-status="Pending"><ml:result /></resultData>`); return ref; });
         if (xml) { out.push(`<region ${geom({ ...r, w: r.w ?? 440, h: r.h ?? 270 })} width="${r.w ?? 440}" height="${r.h ?? 270}">${xml}</region>`); break; }
         const traces = r.traces.map(t => `${t.y} über ${t.x}`).join('; ');

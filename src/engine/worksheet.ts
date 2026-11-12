@@ -11,7 +11,7 @@ import {
 } from './values';
 import { escapeText, formatValue, formatReal, type FormatOptions, siUnitFactors, unitFactorsText } from './format';
 import { stmtLatex, toLatex, type LatexCtx } from './latex';
-import { sortRegions, type DataFile, type MathRegion, type SliderRegion, type PlotRegion, type Region, type TableRegion, type Worksheet } from './model';
+import { sortRegions, type DataFile, type MathRegion, type SliderRegion, type PlotKind, type PlotRegion, type Region, type TableRegion, type Worksheet } from './model';
 import { checkResult, expectedToText, type CheckStatus } from './verify';
 import { symbolicEval } from './symbolic';
 import { WRITE_NAMES, beginWrites, cellValue, endWrites, getWritten, setDataFiles, setWritten } from './datafiles';
@@ -20,7 +20,13 @@ import { toText } from './serialize';
 export interface RegionError { message: string; culprit?: string; pos?: number; end?: number; kind: 'parse' | 'calc' }
 
 export interface PlotTraceData { x: number[]; y: number[]; label: string; color?: string; style?: string }
-export interface PlotData { traces: PlotTraceData[]; xLabel: string; yLabel: string; error?: string; xLim: [number | null, number | null]; yLim: [number | null, number | null] }
+/** Values of z = f(x, y) on a grid: z[j][i] belongs to ys[j] and xs[i] (NaN where not defined). */
+export interface SurfaceData { xs: number[]; ys: number[]; z: number[][]; zLim: [number | null, number | null] }
+export interface PlotData {
+  traces: PlotTraceData[]; xLabel: string; yLabel: string; error?: string; xLim: [number | null, number | null]; yLim: [number | null, number | null];
+  /** Polar: traces hold the angle (rad) in x and the radius in y. Surface/contour: data in `surface`. */
+  kind?: PlotKind; zLabel?: string; surface?: SurfaceData;
+}
 
 export interface RegionResult {
   id: string;
@@ -579,43 +585,30 @@ export class WorksheetEngine {
 
   runPlot(r: PlotRegion): PlotData {
     const out: PlotData = { traces: [], xLabel: '', yLabel: '', xLim: [null, null], yLim: [null, null] };
+    const kind: PlotKind = r.kind ?? 'xy';
+    if (kind !== 'xy') out.kind = kind;
+    if (kind === 'surface' || kind === 'contour') return this.runSurface(r, out);
+    const polar = kind === 'polar';
     const scope = this.top;
     const errors: string[] = [];
     let xUnitVal: Val | undefined, yUnitVal: Val | undefined;
     try {
-      if (r.xUnit?.trim()) xUnitVal = this.ev.eval(parseExpression(r.xUnit), scope);
+      // polar: the angle is always taken in radians
+      if (r.xUnit?.trim() && !polar) xUnitVal = this.ev.eval(parseExpression(r.xUnit), scope);
       if (r.yUnit?.trim()) yUnitVal = this.ev.eval(parseExpression(r.yUnit), scope);
     } catch (e) { errors.push('Achseneinheit: ' + (e as Error).message); }
     /** Axis limit in display units (divided by the axis unit if one is set). */
-    const limit = (s: string | undefined, unit: Val | undefined) => {
-      if (!s || !s.trim()) return undefined;
-      let v = this.ev.eval(parseExpression(s), scope);
-      // a plain number is already in display units; a quantity is converted into them
-      if (unit !== undefined && isUnit(v)) v = this.ev.divide(v, unit, false);
-      return isUnit(v) ? (v as Unit).value as number : toNumber(v);
-    };
+    const limit = (s: string | undefined, unit: Val | undefined) => this.plotLimit(s, unit);
     let xmin: number | undefined, xmax: number | undefined;
     try { xmin = limit(r.xmin, xUnitVal); xmax = limit(r.xmax, xUnitVal); } catch (e) { errors.push('x-Grenzen: ' + (e as Error).message); }
     try { out.yLim = [limit(r.ymin, yUnitVal) ?? null, limit(r.ymax, yUnitVal) ?? null]; } catch (e) { errors.push('y-Grenzen: ' + (e as Error).message); }
     out.xLim = [xmin ?? null, xmax ?? null];
     const xLabels: string[] = [], yLabels: string[] = [];
-    const scalar = (v: Val, unit: Val | undefined, dimsOut: { d?: number[] }): number => {
-      let x = v;
-      if (unit !== undefined) {
-        x = this.ev.divide(v, unit, false);
-        if (isUnit(x) && (x as Unit).dimensions.some((d, i) => i !== 7 && Math.abs(d) > 1e-9)) {
-          throw new CalcError(`Achseneinheit passt nicht zum Wert (übrig: ${unitFactorsText(siUnitFactors((x as Unit).dimensions))})`);
-        }
-      }
-      if (isUnit(x)) { dimsOut.d = (x as Unit).dimensions; return (x as Unit).value as number; }
-      if (isComplex(x)) return (x as { re: number }).re;
-      if (typeof x === 'number') return x;
-      return toNumber(x);
-    };
+    const scalar = (v: Val, unit: Val | undefined, dimsOut: { d?: number[] }) => this.plotScalar(v, unit, dimsOut);
     for (const tr of r.traces) {
       if (!tr.y.trim()) continue;
       try {
-        const xNode = parseExpression(tr.x || 'x');
+        const xNode = parseExpression(tr.x || (polar ? 'φ' : 'x'));
         const yNode = parseExpression(tr.y);
         const xs: number[] = [], ys: number[] = [];
         const xd: { d?: number[] } = {}, yd: { d?: number[] } = {};
@@ -633,13 +626,15 @@ export class WorksheetEngine {
         } else if (quickVar) {
           // QuickPlot: sample the free variable over the axis limits
           // logarithmic x axis: positive interval, logarithmic sampling
-          const b = r.logX ? (xmax !== undefined && xmax > 0 ? xmax : 10) : xmax ?? 10;
-          const a = r.logX ? (xmin !== undefined && xmin > 0 && xmin < b ? xmin : b / 1000) : xmin ?? -10;
-          const N = 400;
+          // polar: one full turn unless limits are given
+          const logX = !!r.logX && !polar;
+          const b = polar ? xmax ?? 2 * Math.PI : logX ? (xmax !== undefined && xmax > 0 ? xmax : 10) : xmax ?? 10;
+          const a = polar ? xmin ?? 0 : logX ? (xmin !== undefined && xmin > 0 && xmin < b ? xmin : b / 1000) : xmin ?? -10;
+          const N = polar ? 720 : 400;
           const local = new Scope(scope);
           let firstErr: unknown;
           for (let i = 0; i <= N; i++) {
-            const t = r.logX ? a * Math.pow(b / a, i / N) : a + (b - a) * i / N;
+            const t = logX ? a * Math.pow(b / a, i / N) : a + (b - a) * i / N;
             // t is in display units: x = t · (axis unit)
             local.set(quickVar, xUnitVal !== undefined ? this.ev.multiply(t, xUnitVal, false) : t);
             try {
@@ -665,14 +660,122 @@ export class WorksheetEngine {
           xa.forEach((x, i) => { xs.push(scalar(x, xUnitVal, xd)); ys.push(scalar(ya[i], yUnitVal, yd)); });
         }
         out.traces.push({ x: xs, y: ys, label: tr.label || tr.y, color: tr.color, style: tr.style });
-        xLabels.push((tr.x || 'x') + (xd.d && !r.xUnit ? ` [${unitFactorsText(siUnitFactors(xd.d))}]` : ''));
+        xLabels.push((tr.x || (polar ? 'φ' : 'x')) + (xd.d && !r.xUnit ? ` [${unitFactorsText(siUnitFactors(xd.d))}]` : ''));
         yLabels.push(tr.y + (yd.d && !r.yUnit ? ` [${unitFactorsText(siUnitFactors(yd.d))}]` : ''));
       } catch (e) {
         errors.push(`${tr.y}: ${(translateError(e) as Error).message}`);
       }
     }
-    out.xLabel = [...new Set(xLabels)].join(', ') + (r.xUnit ? ` [${r.xUnit}]` : '');
+    out.xLabel = [...new Set(xLabels)].join(', ') + (r.xUnit && !polar ? ` [${r.xUnit}]` : '');
     out.yLabel = [...new Set(yLabels)].join(', ') + (r.yUnit ? ` [${r.yUnit}]` : '');
+    if (errors.length) out.error = errors.join('\n');
+    return out;
+  }
+
+  /** Axis limit in display units (divided by the axis unit if one is set). */
+  private plotLimit(s: string | undefined, unit: Val | undefined): number | undefined {
+    if (!s || !s.trim()) return undefined;
+    let v = this.ev.eval(parseExpression(s), this.top);
+    // a plain number is already in display units; a quantity is converted into them
+    if (unit !== undefined && isUnit(v)) v = this.ev.divide(v, unit, false);
+    return isUnit(v) ? (v as Unit).value as number : toNumber(v);
+  }
+
+  /** Plotted number of a value (in the axis unit, if one is set); the remaining dimensions are reported. */
+  private plotScalar(v: Val, unit: Val | undefined, dimsOut: { d?: number[] }): number {
+    let x = v;
+    if (unit !== undefined) {
+      x = this.ev.divide(v, unit, false);
+      if (isUnit(x) && (x as Unit).dimensions.some((d, i) => i !== 7 && Math.abs(d) > 1e-9)) {
+        throw new CalcError(`Achseneinheit passt nicht zum Wert (übrig: ${unitFactorsText(siUnitFactors((x as Unit).dimensions))})`);
+      }
+    }
+    if (isUnit(x)) { dimsOut.d = (x as Unit).dimensions; return (x as Unit).value as number; }
+    if (isComplex(x)) return (x as { re: number }).re;
+    if (typeof x === 'number') return x;
+    return toNumber(x);
+  }
+
+  /**
+   * Surface and contour plots: z = f(x, y) sampled on a grid over the x and y limits, a function of two
+   * arguments given by its name, or a matrix of z values (rows along x, columns along y).
+   */
+  private runSurface(r: PlotRegion, out: PlotData): PlotData {
+    const scope = this.top;
+    const tr = r.traces.find(t => t.y.trim());
+    if (!tr) return out;
+    const errors: string[] = [];
+    const unit = (s: string | undefined, what: string): Val | undefined => {
+      if (!s?.trim()) return undefined;
+      try { return this.ev.eval(parseExpression(s), scope); } catch (e) { errors.push(`Einheit ${what}: ${(translateError(e) as Error).message}`); return undefined; }
+    };
+    const xU = unit(r.xUnit, 'x'), yU = unit(r.yUnit, 'y'), zU = unit(r.zUnit, 'z');
+    const lim = (s: string | undefined, u: Val | undefined, what: string): number | undefined => {
+      try { const v = this.plotLimit(s, u); return v !== undefined && Number.isFinite(v) ? v : undefined; } catch (e) { errors.push(`${what}: ${(translateError(e) as Error).message}`); return undefined; }
+    };
+    let x0 = lim(r.xmin, xU, 'x von') ?? -5, x1 = lim(r.xmax, xU, 'x bis') ?? 5;
+    let y0 = lim(r.ymin, yU, 'y von') ?? -5, y1 = lim(r.ymax, yU, 'y bis') ?? 5;
+    if (x0 > x1) [x0, x1] = [x1, x0];
+    if (y0 > y1) [y0, y1] = [y1, y0];
+    if (x0 === x1) { x0 -= 1; x1 += 1; }
+    if (y0 === y1) { y0 -= 1; y1 += 1; }
+    const zLim: [number | null, number | null] = [lim(r.zmin, zU, 'z von') ?? null, lim(r.zmax, zU, 'z bis') ?? null];
+    const xName = (tr.x || 'x').trim(), yName = (r.yVar || 'y').trim();
+    const zd: { d?: number[] } = {};
+    const xUnitText = r.xUnit?.trim() ? ` [${r.xUnit.trim()}]` : '', yUnitText = r.yUnit?.trim() ? ` [${r.yUnit.trim()}]` : '';
+    try {
+      if (!/^[\p{L}_][\p{L}\p{N}_.]*$/u.test(xName) || !/^[\p{L}_][\p{L}\p{N}_.]*$/u.test(yName)) throw new CalcError('Die beiden Variablen müssen Namen sein (z. B. x und y)');
+      if (xName === yName) throw new CalcError('Die beiden Variablen brauchen verschiedene Namen');
+      let zNode = parseExpression(tr.y);
+      const names = new Set<string>();
+      walk(zNode, n => { if (n.k === 'id') names.add(n.name); });
+      let matrix: Val[][] | null = null;
+      if (zNode.k === 'id' && isFn(scope.get(zNode.name)) && (scope.get(zNode.name) as FnVal).params.length === 2) {
+        // name of a function of two arguments
+        zNode = parseExpression(`${zNode.name}(${xName}, ${yName})`);
+      } else if (!names.has(xName) && !names.has(yName)) {
+        const v = this.ev.eval(zNode, scope);
+        if (isMatrix(v)) {
+          const rows = (v as Matrix).toArray() as Val[][] | Val[];
+          matrix = rows.map(row => (Array.isArray(row) ? row : [row])) as Val[][];
+          if (matrix.length < 2 || matrix[0].length < 2) throw new CalcError('Für eine Fläche braucht die Matrix mindestens 2 × 2 Werte');
+          if (matrix.length * matrix[0].length > 40000) throw new CalcError('Matrix zu groß für ein Flächendiagramm (höchstens 40 000 Werte)');
+        }
+      }
+      const xs: number[] = [], ys: number[] = [], z: number[][] = [];
+      if (matrix) {
+        const o = this.ev.opts.origin;
+        for (let i = 0; i < matrix.length; i++) xs.push(i + o);
+        for (let j = 0; j < matrix[0].length; j++) ys.push(j + o);
+        for (let j = 0; j < ys.length; j++) z.push(xs.map((_, i) => { try { return this.plotScalar(matrix![i][j], zU, zd); } catch { return NaN; } }));
+        out.xLabel = 'Zeile'; out.yLabel = 'Spalte';
+      } else {
+        const n = Math.max(4, Math.min(120, Math.round(r.grid ?? (r.kind === 'contour' ? 60 : 30))));
+        for (let i = 0; i <= n; i++) xs.push(x0 + (x1 - x0) * i / n);
+        for (let j = 0; j <= n; j++) ys.push(y0 + (y1 - y0) * j / n);
+        const local = new Scope(scope);
+        let firstErr: unknown, ok = 0;
+        for (let j = 0; j <= n; j++) {
+          const row: number[] = [];
+          local.set(yName, yU !== undefined ? this.ev.multiply(ys[j], yU, false) : ys[j]);
+          for (let i = 0; i <= n; i++) {
+            local.set(xName, xU !== undefined ? this.ev.multiply(xs[i], xU, false) : xs[i]);
+            try {
+              const v = this.plotScalar(this.ev.eval(zNode, local), zU, zd);
+              row.push(Number.isFinite(v) ? v : NaN);
+              if (Number.isFinite(v)) ok++;
+            } catch (e) { firstErr = firstErr ?? e; row.push(NaN); }
+          }
+          z.push(row);
+        }
+        if (!ok && firstErr) throw firstErr;
+        out.xLabel = xName + xUnitText; out.yLabel = yName + yUnitText;
+      }
+      out.surface = { xs, ys, z, zLim };
+      out.zLabel = (tr.label || tr.y) + (r.zUnit?.trim() ? ` [${r.zUnit.trim()}]` : zd.d ? ` [${unitFactorsText(siUnitFactors(zd.d))}]` : '');
+    } catch (e) {
+      errors.push(`${tr.y}: ${(translateError(e) as Error).message}`);
+    }
     if (errors.length) out.error = errors.join('\n');
     return out;
   }

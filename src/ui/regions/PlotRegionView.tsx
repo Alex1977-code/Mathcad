@@ -1,28 +1,12 @@
 import { useMemo, useRef, useState } from 'react';
 import { safeColor, type PlotRegion } from '../../engine/model';
 import type { PlotData } from '../../engine/worksheet';
-import { formatReal } from '../../engine/format';
+import { PLOT_COLORS, fmtTick, linearTicks } from './plot3d';
+import { PolarPlot, SurfacePlot, ContourPlot } from './PlotKinds';
 import { IconEdit } from '../icons';
 import { store } from '../store';
 
-export const PLOT_COLORS = ['#3b5bdb', '#e03131', '#2f9e44', '#9c36b5', '#f08c00', '#0c8599', '#d6336c', '#495057'];
-
-function niceStep(range: number, target: number) {
-  const raw = range / Math.max(1, target);
-  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
-  const n = raw / mag;
-  const nice = n < 1.5 ? 1 : n < 3 ? 2 : n < 7 ? 5 : 10;
-  return nice * mag;
-}
-
-export function linearTicks(min: number, max: number, target = 6): number[] {
-  if (!isFinite(min) || !isFinite(max)) return [];
-  if (min === max) { min -= 1; max += 1; }
-  const step = niceStep(max - min, target);
-  const out: number[] = [];
-  for (let v = Math.ceil(min / step - 1e-9) * step; v <= max + step * 1e-9; v += step) out.push(Math.abs(v) < step * 1e-9 ? 0 : v);
-  return out;
-}
+export { PLOT_COLORS };
 
 function logTicks(min: number, max: number): number[] {
   const out: number[] = [];
@@ -31,11 +15,28 @@ function logTicks(min: number, max: number): number[] {
   return out.filter(v => v >= min * 0.999 && v <= max * 1.001);
 }
 
-const fmtTick = (v: number) => formatReal(v, { decimals: 4, expThreshold: 6, maxMatrix: 1 }).text;
+interface Props { region: PlotRegion; data?: PlotData; onEdit: () => void; selected?: boolean }
 
-interface Props { region: PlotRegion; data?: PlotData; onEdit: () => void }
+export function PlotRegionView(props: Props) {
+  const kind = props.region.kind ?? 'xy';
+  const Body = kind === 'polar' ? PolarPlot : kind === 'surface' ? SurfacePlot : kind === 'contour' ? ContourPlot : XYPlot;
+  const { region, data, onEdit } = props;
+  const W = region.w ?? 440, H = region.h ?? 270;
+  const hasData = kind === 'surface' || kind === 'contour' ? !!data?.surface : !!data?.traces.length;
+  return (
+    <div style={{ position: 'relative' }}>
+      <button className="btn icon plot-edit-btn" title="Diagramm bearbeiten" onMouseDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); onEdit(); }}><IconEdit /></button>
+      {hasData ? <Body {...props} /> : (
+        <div className="plot-empty" style={{ width: W, height: H }}>
+          {region.traces.some(t => t.y.trim()) ? (data ? 'Keine darstellbaren Werte' : 'Wird berechnet …') : 'Diagramm: Ausdrücke über ✎ festlegen'}
+        </div>
+      )}
+      {data?.error && <div className="plot-error">⚠ {data.error}</div>}
+    </div>
+  );
+}
 
-export function PlotRegionView({ region, data, onEdit }: Props) {
+function XYPlot({ region, data }: Props) {
   const W = region.w ?? 440, H = region.h ?? 270;
   const pad = { l: 58, r: 16, t: region.title ? 28 : 12, b: 42 };
   const [hover, setHover] = useState<{ x: number; y: number; text: string } | null>(null);
@@ -103,12 +104,9 @@ export function PlotRegionView({ region, data, onEdit }: Props) {
 
   const plotW = W - pad.l - pad.r, plotH = H - pad.t - pad.b;
   return (
-    <div style={{ position: 'relative' }}>
-      <button className="btn icon plot-edit-btn" title="Diagramm bearbeiten" onMouseDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); onEdit(); }}><IconEdit /></button>
+    <>
       {!geo ? (
-        <div className="plot-empty" style={{ width: W, height: H }}>
-          {region.traces.some(t => t.y.trim()) ? (data ? 'Keine darstellbaren Werte' : 'Wird berechnet …') : 'Diagramm: Ausdrücke über ✎ festlegen'}
-        </div>
+        <div className="plot-empty" style={{ width: W, height: H }}>Keine darstellbaren Werte</div>
       ) : (
         <svg ref={svgRef} className="plot-svg" width={W} height={H} onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
           <defs><clipPath id={`clip-${region.id}`}><rect x={pad.l} y={pad.t} width={plotW} height={plotH} /></clipPath></defs>
@@ -154,7 +152,6 @@ export function PlotRegionView({ region, data, onEdit }: Props) {
         </svg>
       )}
       {hover && <div className="plot-tooltip" style={{ left: hover.x + 10, top: hover.y - 30 }}>{hover.text}</div>}
-      {data?.error && <div className="plot-error">⚠ {data.error}</div>}
-    </div>
+    </>
   );
 }

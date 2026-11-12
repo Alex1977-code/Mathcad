@@ -11,7 +11,7 @@ import { FindBar } from './FindBar';
 import { setLatestResult } from './smart';
 import { autosave, downloadBlob, exportHtml, htmlBlob, loadAutosave, pickFileForOpen, readWorksheet, resetFileHandle, safeName, saveWorksheet, setFileHandle } from './files';
 import { addRecent, openRecent, type FileSystemFileHandleLike } from './recent';
-import { makeDocx, withLightTheme } from './exporters';
+import { makeDocx, plotPng, withLightTheme } from './exporters';
 import { installPrintHooks } from './print';
 import { applyUpdate, installApp, onPwaChange, pwa, registerOffline } from './pwa';
 import { exampleWorksheet } from './examples';
@@ -121,7 +121,7 @@ export function App() {
   };
   const makeMcdx = async () => {
     const { buildMcdx } = await import('../export/mcdx');
-    const r = await buildMcdx(store.get().ws, { result: latestResult.current, fileName: store.get().fileName });
+    const r = await withLightTheme(() => buildMcdx(store.get().ws, { result: latestResult.current, fileName: store.get().fileName, plotPng }));
     if (r.warnings.length) notify(`Mathcad-Export: ${r.warnings.length} Hinweis${r.warnings.length > 1 ? 'e' : ''} – ${r.warnings[0]}`, true);
     return r.blob;
   };

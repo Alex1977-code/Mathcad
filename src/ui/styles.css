@@ -35,6 +35,20 @@
   --radius: 10px;
   --radius-sm: 7px;
   color-scheme: light;
+  /* colour scale for heights (surface and contour plots): low → high */
+  --seq-0: #cde2fb;
+  --seq-1: #b7d3f6;
+  --seq-2: #9ec5f4;
+  --seq-3: #86b6ef;
+  --seq-4: #6da7ec;
+  --seq-5: #5598e7;
+  --seq-6: #3987e5;
+  --seq-7: #2a78d6;
+  --seq-8: #256abf;
+  --seq-9: #1c5cab;
+  --seq-10: #184f95;
+  --seq-11: #104281;
+  --seq-12: #0d366b;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -67,6 +81,19 @@
     --selection-border: rgba(123, 147, 255, .6);
     --shadow-pop: 0 12px 34px rgba(0, 0, 0, .5);
     color-scheme: dark;
+    --seq-0: #0d366b;
+    --seq-1: #104281;
+    --seq-2: #184f95;
+    --seq-3: #1c5cab;
+    --seq-4: #256abf;
+    --seq-5: #2a78d6;
+    --seq-6: #3987e5;
+    --seq-7: #5598e7;
+    --seq-8: #6da7ec;
+    --seq-9: #86b6ef;
+    --seq-10: #9ec5f4;
+    --seq-11: #b7d3f6;
+    --seq-12: #cde2fb;
   }
 }
 :root[data-theme="dark"] {
@@ -98,6 +125,19 @@
   --selection-border: rgba(123, 147, 255, .6);
   --shadow-pop: 0 12px 34px rgba(0, 0, 0, .5);
   color-scheme: dark;
+  --seq-0: #0d366b;
+  --seq-1: #104281;
+  --seq-2: #184f95;
+  --seq-3: #1c5cab;
+  --seq-4: #256abf;
+  --seq-5: #2a78d6;
+  --seq-6: #3987e5;
+  --seq-7: #5598e7;
+  --seq-8: #6da7ec;
+  --seq-9: #86b6ef;
+  --seq-10: #9ec5f4;
+  --seq-11: #b7d3f6;
+  --seq-12: #cde2fb;
 }
 
 * { box-sizing: border-box; }
@@ -404,6 +444,13 @@ button { cursor: pointer; }
 .plot-svg .zero { stroke: var(--text-faint); stroke-width: 1; }
 .plot-svg .title { fill: var(--text); font-weight: 600; font-size: 12.5px; }
 .plot-svg .label { fill: var(--text-soft); font-size: 11.5px; }
+.plot-svg .grid circle { stroke: var(--border); }
+.plot-svg .rtick { font-size: 10px; }
+.plot-svg .frame line { stroke: var(--border-strong); }
+.plot-svg .mesh polygon { stroke: var(--page); stroke-width: 0.5; stroke-opacity: 0.55; stroke-linejoin: round; }
+.plot-svg .iso path { stroke: var(--text); stroke-width: 1; stroke-opacity: 0.6; }
+.plot-svg.rotatable { cursor: grab; }
+.plot-svg.rotatable:active { cursor: grabbing; }
 .plot-tooltip { position: absolute; pointer-events: none; z-index: 30; background: var(--bg-elev); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; font-size: 11.5px; box-shadow: var(--shadow-pop); white-space: nowrap; }
 .plot-error { color: var(--danger); font-size: 11.5px; white-space: pre-wrap; max-width: 100%; }
 .plot-empty { display: grid; place-items: center; color: var(--text-faint); font-size: 12.5px; border: 1px dashed var(--border-strong); border-radius: 8px; }

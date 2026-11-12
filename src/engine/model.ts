@@ -43,13 +43,28 @@ export interface TextRegion extends RegionBase {
 
 export interface PlotTrace { x: string; y: string; color?: string; style?: 'line' | 'points' | 'both'; label?: string }
 
+/** Kind of a plot: X-Y (default), polar (x = angle, y = radius), surface and contour of z = f(x, y). */
+export type PlotKind = 'xy' | 'polar' | 'surface' | 'contour';
+export const PLOT_KINDS: PlotKind[] = ['xy', 'polar', 'surface', 'contour'];
+
 export interface PlotRegion extends RegionBase {
   type: 'plot';
+  kind?: PlotKind;
+  /**
+   * X-Y: x and y expression per curve. Polar: x = angle, y = radius.
+   * Surface/contour: the first trace holds the name of the first variable (x) and the expression for z.
+   */
   traces: PlotTrace[];
   xmin?: string; xmax?: string; ymin?: string; ymax?: string;
   xUnit?: string; yUnit?: string;
   logX?: boolean; logY?: boolean;
   title?: string;
+  /** Surface/contour: name of the second variable (default y), limits and unit of z, grid lines per direction. */
+  yVar?: string;
+  zmin?: string; zmax?: string; zUnit?: string;
+  grid?: number;
+  /** Surface: viewing direction in degrees (rotation about the vertical axis, elevation). */
+  az?: number; el?: number;
 }
 
 export interface ImageRegion extends RegionBase {
@@ -244,9 +259,15 @@ export function normalizeWorksheet(raw: unknown): Worksheet {
           return tr;
         });
         const p: PlotRegion = { ...base, type: 'plot', traces };
-        for (const k of ['xmin', 'xmax', 'ymin', 'ymax', 'xUnit', 'yUnit', 'title'] as const) { const v = str(r[k], 2000); if (v !== undefined) p[k] = v; }
+        for (const k of ['xmin', 'xmax', 'ymin', 'ymax', 'xUnit', 'yUnit', 'title', 'zmin', 'zmax', 'zUnit'] as const) { const v = str(r[k], 2000); if (v !== undefined) p[k] = v; }
         if (r.logX === true) p.logX = true;
         if (r.logY === true) p.logY = true;
+        if (r.kind === 'polar' || r.kind === 'surface' || r.kind === 'contour') p.kind = r.kind;
+        const yv = str(r.yVar, 100);
+        if (yv !== undefined) p.yVar = yv;
+        if (r.grid !== undefined) p.grid = Math.round(num(r.grid, 4, 120, 30));
+        if (r.az !== undefined) p.az = num(r.az, -3600, 3600, 35);
+        if (r.el !== undefined) p.el = num(r.el, -90, 90, 28);
         regions.push(p);
         break;
       }

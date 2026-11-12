@@ -4,7 +4,7 @@ import {
   alignSelection, canPaste, commands, copyImageWithToast, copySelection, deleteSelection, duplicateSelection, editSelection, insertRegion, paste,
   selectAll, separateAll, toggleDisabled,
 } from './actions';
-import { makeSlider, sliderFromDefinition, compatibleUnits, copyResult, currentUnit, equationUnknown, plotFunction, plottableFunction, resultOf, setDisplayUnit, solveEquation, toggleShowValue, toggleValue, withDisplayUnit } from './smart';
+import { makeSlider, sliderFromDefinition, compatibleUnits, copyResult, currentUnit, equationUnknown, isAngleName, plotFunction, plottableFunction, resultOf, setDisplayUnit, solveEquation, toggleShowValue, toggleValue, withDisplayUnit } from './smart';
 
 interface Item { label: string; keys?: string; run: () => void; disabled?: boolean; danger?: boolean }
 type Entry = Item | 'sep';
@@ -42,7 +42,13 @@ export function ContextMenu() {
     if (region.type === 'math' && !multi) {
       const res = resultOf(region.id);
       const fn = plottableFunction(region.src);
-      if (fn) smart.push({ label: `Diagramm von ${fn.name}(${fn.param}) einfügen`, keys: '@', run: () => plotFunction(region.id) });
+      if (fn && fn.param2) {
+        smart.push({ label: `3D-Fläche von ${fn.name}(${fn.param}, ${fn.param2}) einfügen`, keys: '@', run: () => plotFunction(region.id, 'surface') });
+        smart.push({ label: `Höhenlinien von ${fn.name}(${fn.param}, ${fn.param2}) einfügen`, run: () => plotFunction(region.id, 'contour') });
+      } else if (fn) {
+        smart.push({ label: `Diagramm von ${fn.name}(${fn.param}) einfügen`, keys: '@', run: () => plotFunction(region.id) });
+        if (isAngleName(fn.param)) smart.push({ label: `Polardiagramm von ${fn.name}(${fn.param}) einfügen`, run: () => plotFunction(region.id, 'polar') });
+      }
       const tog = toggleShowValue(region.src);
       if (tog !== null) smart.push({ label: tog.endsWith('=') ? 'Wert anzeigen' : 'Wert ausblenden', run: () => toggleValue(region.id) });
       if (res?.resultLatex && !res.error && withDisplayUnit(region.src, null) !== null) {
@@ -73,6 +79,8 @@ export function ContextMenu() {
       { label: 'Formel hier einfügen', run: () => insertRegion('math', at) },
       { label: 'Text hier einfügen', run: () => insertRegion('text', at) },
       { label: 'Diagramm hier einfügen', run: () => insertRegion('plot', at) },
+      { label: 'Polardiagramm hier einfügen', run: () => insertRegion('plot', at, 'polar') },
+      { label: '3D-Diagramm hier einfügen', run: () => insertRegion('plot', at, 'surface') },
       'sep',
       { label: 'Einfügen', keys: 'Strg+V', run: () => paste(at), disabled: !canPaste() },
       { label: 'Alles auswählen', keys: 'Strg+A', run: selectAll },

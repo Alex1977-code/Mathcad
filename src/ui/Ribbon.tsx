@@ -157,7 +157,12 @@ export function Ribbon() {
             <Group label="Bereiche">
               <Big icon={<IconMath />} label="Formel" title="Formel einfügen – oder einfach aufs Blatt klicken und tippen" onClick={() => insertRegion('math')} />
               <Big icon={<IconText />} label="Text" title="Textbereich einfügen (Taste &quot;)" onClick={() => insertRegion('text')} />
-              <Big icon={<IconChart />} label="Diagramm" title="X-Y-Diagramm einfügen" onClick={() => insertRegion('plot')} />
+              <Big icon={<IconChart />} label="Diagramm" title="X-Y-Diagramm einfügen (Taste @)" onClick={() => insertRegion('plot')} />
+              <Stack>
+                <Small icon={<span className="ico-text">◎</span>} label="Polar" title="Polardiagramm einfügen: Radius über dem Winkel" onClick={() => insertRegion('plot', undefined, 'polar')} />
+                <Small icon={<span className="ico-text">◪</span>} label="3D-Fläche" title="3D-Diagramm einfügen: Fläche z = f(x, y), mit der Maus drehbar" onClick={() => insertRegion('plot', undefined, 'surface')} />
+                <Small icon={<span className="ico-text">◍</span>} label="Höhenlinien" title="Höhenlinien-Diagramm einfügen: z = f(x, y) als Farbe mit Linien gleicher Höhe" onClick={() => insertRegion('plot', undefined, 'contour')} />
+              </Stack>
               <Stack>
                 <Small icon={<span className="ico-text">▦</span>} label="Tabelle" title="Datentabelle einfügen (Werte direkt eingeben oder aus Excel einfügen)" onClick={() => insertTable()} />
                 <Small icon={<span className="ico-text">⇪</span>} label="Daten" title="CSV- oder Excel-Datei einlesen (READCSV / READEXCEL) – oder Datei aufs Blatt ziehen" onClick={() => { void insertDataFile(); }} />

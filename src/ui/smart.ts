@@ -7,7 +7,7 @@ import { tokenize, findTopLevel, parseMathRegion, type Token } from '../engine/p
 import { ComputeSession, type ComputeResult, type RegionResult } from '../engine/worksheet';
 import { COMMON_UNITS, EXTRA_DISPLAY_UNITS, lookupUnit, unitDimensions } from '../engine/units';
 import { isBuiltinFunction } from '../engine/builtins';
-import { newId, sortRegions, type MathRegion, type Region, type Worksheet } from '../engine/model';
+import { newId, sortRegions, type MathRegion, type PlotKind, type Region, type Worksheet } from '../engine/model';
 import { store } from './store';
 import { regionElements, snap } from './layout';
 
@@ -57,13 +57,27 @@ export function toggleShowValue(src: string): string | null {
   return src.trimEnd() + ' =';
 }
 
-/** Function definition with exactly one parameter: name and parameter ("f(x) := …"). */
-export function plottableFunction(src: string): { name: string; param: string } | null {
+/** Function definition with one parameter ("f(x) := …") or two ("f(x, y) := …", drawn as a surface). */
+export function plottableFunction(src: string): { name: string; param: string; param2?: string } | null {
   try {
     const st = parseMathRegion(src);
-    if (st.kind === 'define' && st.target.params?.length === 1 && !st.target.index) return { name: st.target.name, param: st.target.params[0] };
+    if (st.kind !== 'define' || st.target.index || !st.target.params) return null;
+    const [a, b] = st.target.params;
+    if (st.target.params.length === 1) return { name: st.target.name, param: a };
+    if (st.target.params.length === 2) return { name: st.target.name, param: a, param2: b };
   } catch { /* not a formula */ }
   return null;
+}
+
+/** A parameter that reads as an angle: the function is offered as a polar plot. */
+export const isAngleName = (n: string) => /^(φ|ϕ|θ|ϑ|α|phi|theta|alpha)$/.test(n);
+
+/** Empty plot of a kind with its default limits. */
+export function emptyPlot(kind: PlotKind, x: number, y: number): Region & { type: 'plot' } {
+  const base = { id: newId(), type: 'plot' as const, x, y, w: 440 };
+  if (kind === 'polar') return { ...base, h: 300, kind, traces: [{ x: 'φ', y: '' }], xmin: '0', xmax: '2*π' };
+  if (kind === 'surface' || kind === 'contour') return { ...base, h: 320, kind, traces: [{ x: 'x', y: '' }], yVar: 'y', xmin: '-5', xmax: '5', ymin: '-5', ymax: '5' };
+  return { ...base, h: 270, traces: [{ x: 'x', y: '' }], xmin: '-10', xmax: '10' };
 }
 
 /** "lhs == rhs" (or "lhs = rhs" that failed because of an unknown name): the two sides. */
@@ -150,25 +164,38 @@ function quickVar(param: string): string {
   return [param, 'x', 't', 'u', 'ξ'].find(n => !known.has(n)) ?? param;
 }
 
-/** X-Y plot of a function f(x) right below its definition. */
-export function plotFunction(id: string) {
+/** Plot of a function right below its definition: f(x) as X-Y (or polar) plot, f(x, y) as surface or contour plot. */
+export function plotFunction(id: string, kind?: PlotKind) {
   const r = store.get().ws.regions.find(x => x.id === id);
   if (!r || r.type !== 'math') return;
   const f = plottableFunction(r.src);
   if (!f) return;
-  const v = quickVar(f.param);
-  insertBelow(r, y => [{ id: newId(), type: 'plot', x: r.x, y, w: 440, h: 270, traces: [{ x: v, y: `${f.name}(${v})` }], xmin: '-10', xmax: '10' }], 270);
+  const k: PlotKind = f.param2 ? (kind === 'contour' ? 'contour' : 'surface') : kind === 'polar' ? 'polar' : 'xy';
+  const known = new Set((latest?.variables ?? []).map(v => v.name));
+  insertBelow(r, y => {
+    const p = emptyPlot(k, r.x, y);
+    if (f.param2) {
+      // the two variables are sampled by the plot even if they are defined in the worksheet
+      const a = f.param, b = f.param2 === a ? `${a}2` : f.param2;
+      return [{ ...p, traces: [{ x: a, y: `${f.name}(${a}, ${b})` }], yVar: b }];
+    }
+    const v = k === 'polar' ? [f.param, 'φ', 'θ', 'α'].find(n => !known.has(n)) ?? f.param : quickVar(f.param);
+    return [{ ...p, traces: [{ x: v, y: `${f.name}(${v})` }] }];
+  }, k === 'xy' ? 270 : k === 'polar' ? 300 : 320);
 }
 
 /** Empty plot at the cursor (Mathcad "@"), prefilled with a selected function. */
-export function quickPlotAtCursor() {
+export function quickPlotAtCursor(kind: PlotKind = 'xy') {
   const s = store.get();
   const sel = s.selection.length === 1 ? s.ws.regions.find(r => r.id === s.selection[0]) : undefined;
-  if (sel?.type === 'math' && plottableFunction(sel.src)) { plotFunction(sel.id); return; }
+  const fn = sel?.type === 'math' ? plottableFunction(sel.src) : null;
+  const d3 = kind === 'surface' || kind === 'contour';
+  if (sel && fn && !!fn.param2 === d3) { plotFunction(sel.id, kind); return; }
+  if (sel && fn?.param2 && kind === 'xy') { plotFunction(sel.id, 'surface'); return; }
   const cur = s.cursor ?? { x: 48, y: 48 };
-  const p: Region = { id: newId(), type: 'plot', x: cur.x, y: cur.y, w: 440, h: 270, traces: [{ x: 'x', y: '' }], xmin: '-10', xmax: '10' };
+  const p = emptyPlot(kind, cur.x, cur.y);
   store.addRegion(p);
-  store.set({ plotEditor: p.id, cursor: { x: cur.x, y: snap(cur.y + 290) } });
+  store.set({ plotEditor: p.id, cursor: { x: cur.x, y: snap(cur.y + (p.h ?? 270) + 20) } });
 }
 
 /** "a := 5 m" (a number, optionally with a unit) → the parts of a slider; null for anything else. */
